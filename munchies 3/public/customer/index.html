@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="theme-color" content="#0a0a0b">
+<title>Munchies — Premium Hemp, Delivered</title>
+<link rel="manifest" href="/customer/manifest.json">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/customer/style.css">
+</head>
+<body>
+<div class="phone-shell" id="shell">
+  <div class="notch"></div>
+  <div class="statusbar"><span id="clock">9:41</span><span style="font-size:11px">100%</span></div>
+  <div class="viewport" id="viewport"></div>
+
+  <div id="toast" class="toast">
+    <div class="ic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></div>
+    <div><div class="tt" id="toast-title">Added to cart</div><div class="tb" id="toast-body"></div></div>
+  </div>
+
+  <nav class="tabbar hidden" id="tabbar">
+    <button class="tab active" data-tab="home" onclick="nav('home')">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3 2 12h3v8h6v-6h2v6h6v-8h3z"/></svg>Home
+    </button>
+    <button class="tab" data-tab="browse" onclick="nav('browse')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Browse
+    </button>
+    <button class="tab" data-tab="orders" onclick="nav('orders')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h18l-2 13H5z"/><path d="M8 7V5a4 4 0 0 1 8 0v2"/></svg>Orders
+    </button>
+    <button class="tab" data-tab="rewards" onclick="nav('rewards')">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="m12 2 2.4 7.4H22l-6 4.6 2.3 7.4L12 16.8 5.7 21.4 8 14 2 9.4h7.6z"/></svg>Rewards
+    </button>
+    <button class="tab" data-tab="profile" onclick="nav('profile')">
+      <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>Profile
+    </button>
+  </nav>
+</div>
+<script src="/customer/app.js"></script>
+</body>
+</html>

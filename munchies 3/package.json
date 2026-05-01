@@ -1,0 +1,22 @@
+{
+  "name": "munchies",
+  "version": "0.1.0",
+  "description": "Munchies — premium hemp/THCA delivery & retail platform (customer + admin + driver)",
+  "main": "server.js",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "seed": "node seed.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.7",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "stripe": "^17.4.0"
+  }
+}
