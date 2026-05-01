@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: munchies
+    runtime: node
+    plan: free
+    rootDir: munchies 3
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: NODE_ENV
+        value: production
+      - key: DB_PATH
+        value: /tmp/munchies.db
