@@ -54,7 +54,6 @@ function toast(title, body) {
   clearTimeout(window._tt);
   window._tt = setTimeout(()=>t.classList.remove('show'), 2600);
 }
-
 // ===== Money =====
 const $$ = c => `$${(c/100).toFixed(2)}`;
 
@@ -497,11 +496,11 @@ screens.checkout = () => {
         </div>
       </div>
       <div class="pd-section-title" style="margin-top:18px">Payment (Stripe test mode)</div>
-      <div class="prof-row" style="border-color:var(--neon)">
-        <div class="ic">💳</div>
+    <div class="prof-row" style="border-color:var(--neon);cursor:pointer" onclick="${state.fulfillment==='delivery'?'editAddress()':''}">
+        <div class="ic">${state.fulfillment==='delivery'?'📍':'🏪'}</div>
         <div style="flex:1">
-          <div style="font-weight:600;font-size:13px">Visa · 4242 (test)</div>
-          <div class="muted tiny" style="margin-top:2px">Test mode — no real charge</div>
+          <div style="font-weight:600;font-size:13px">${state.fulfillment==='delivery'?(localStorage.getItem('munchies_address')||'📝 Tap to add your address'):'Munchies Downtown'}</div>
+          <div class="muted tiny" style="margin-top:2px">${state.fulfillment==='delivery'?(localStorage.getItem('munchies_address')?'Tap to change address':'Required for delivery'):'412 Market Ave · 0.8 mi away'}</div>
         </div>
       </div>
       <div class="pd-section-title" style="margin-top:18px">ID verification</div>
@@ -525,10 +524,14 @@ screens.checkout = () => {
 };
 
 window.placeOrder = async () => {
+  if (state.fulfillment === 'delivery' && !localStorage.getItem('munchies_address')) {
+    toast('Address required', 'Tap the address card to add one');
+    return;
+  }
   try {
     const r = await api('/orders', { method:'POST', body: {
       fulfillment: state.fulfillment,
-      address: state.fulfillment==='delivery' ? '123 Main St, Apt 4B' : null,
+    address: state.fulfillment==='delivery' ? (localStorage.getItem('munchies_address') || '') : null,
       promo_code: state.promo,
     }});
     state.cart = { items: [], subtotal_cents: 0 };
@@ -726,5 +729,13 @@ function render() {
 }
 window.render = render;
 window.state = state;
+window.editAddress = () => {
+  const cur = localStorage.getItem('munchies_address') || '';
+  const v = prompt('Enter your delivery address (street, apt, city):', cur);
+  if (v && v.trim()) {
+    localStorage.setItem('munchies_address', v.trim());
+    render();
+  }
+};
 
 init();
