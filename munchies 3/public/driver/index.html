@@ -13,7 +13,7 @@
 html,body{height:100%}
 body{font-family:'Inter',sans-serif;background:#000;color:var(--text);display:flex;align-items:center;justify-content:center;min-height:100vh;background:radial-gradient(900px 500px at 50% -10%,rgba(198,255,61,.06),transparent 60%),#050507}
 .phone{width:min(420px,100vw);height:min(900px,100vh);background:var(--bg);border-radius:48px;border:1px solid #1a1a20;box-shadow:0 40px 80px rgba(0,0,0,.6),0 0 0 10px #0c0c10,0 0 0 11px #1f1f26;overflow:hidden;position:relative;display:flex;flex-direction:column}
-@media (max-width:480px){body{background:var(--bg)}.phone{width:100vw;height:100vh;border-radius:0;border:none;box-shadow:none}}
+@media (max-width:480px){body{background:var(--bg)}.phone{width:100vw;height:100vh;border-radius:0;border:none;box-shadow:none}.notch{display:none}.statusbar{display:none}.toast{top:14px}}{body{background:var(--bg)}.phone{width:100vw;height:100vh;border-radius:0;border:none;box-shadow:none}}
 .notch{position:absolute;top:14px;left:50%;transform:translateX(-50%);width:120px;height:30px;background:#000;border-radius:20px;z-index:200}
 .statusbar{position:relative;z-index:150;display:flex;justify-content:space-between;align-items:center;padding:14px 28px 0;font-size:13px;font-weight:600}
 .viewport{flex:1;overflow:hidden;position:relative}
@@ -88,7 +88,7 @@ h1,h2,h3{font-family:'Syne',sans-serif;letter-spacing:-.5px;font-weight:700}
   <div class="notch"></div>
   <div class="statusbar"><span id="clock">9:41</span><span style="font-size:11px">100%</span></div>
   <div class="viewport" id="viewport"><div class="spinner"></div></div>
-  <div id="toast" class="toast">
+<div id="toast" class="toast" onclick="this.classList.remove('show')">
     <div class="ic">✓</div>
     <div><div class="tt" id="toast-title"></div><div class="tb" id="toast-body"></div></div>
   </div>
