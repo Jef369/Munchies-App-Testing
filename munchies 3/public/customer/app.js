@@ -54,8 +54,30 @@ function toast(title, body) {
   clearTimeout(window._tt);
   window._tt = setTimeout(()=>t.classList.remove('show'), 2600);
 }
+
 // ===== Money =====
 const $$ = c => `$${(c/100).toFixed(2)}`;
+
+// ===== Address (persisted in browser localStorage) =====
+function getAddress() {
+  return localStorage.getItem('munchies_address') || '';
+}
+function getAddressShort() {
+  const a = getAddress();
+  if (!a) return 'Add address';
+  // Return the first part before the first comma (street) or first 22 chars
+  const first = a.split(',')[0].trim();
+  return first.length > 22 ? first.slice(0,20) + '…' : first;
+}
+window.editAddress = () => {
+  const cur = getAddress();
+  const v = prompt('Enter your delivery address (street, apt, city, state, zip):', cur);
+  if (v !== null && v.trim()) {
+    localStorage.setItem('munchies_address', v.trim());
+    toast('Address saved', v.trim());
+    render();
+  }
+};
 
 // ===== Navigation =====
 function nav(name) {
@@ -200,7 +222,7 @@ screens.home = () => {
       <div class="app-header">
         <div>
           <div class="greet">Good evening 👋</div>
-          <div class="name">Deliver to <span style="color:var(--neon)">123 Main St ▾</span></div>
+          <div class="name">Deliver to <span style="color:var(--neon);cursor:pointer" onclick="editAddress()">${getAddressShort()} ▾</span></div>
         </div>
         <div style="display:flex;gap:8px">
           <div class="icon-btn" onclick="toast('🎁 Welcome offer','Use code FIRST20')">
@@ -475,6 +497,7 @@ screens.checkout = () => {
   const delivery = state.fulfillment === 'delivery' ? 499 : 0;
   const tax = Math.round((sub - discount) * 0.08);
   const total = sub - discount + delivery + tax;
+  const addr = getAddress();
   return `
   <div class="screen">
     <div class="simple-header">
@@ -488,19 +511,30 @@ screens.checkout = () => {
         <div class="ff-opt ${state.fulfillment==='pickup'?'active':''}" onclick="state.fulfillment='pickup';render()">🏪 Pickup</div>
       </div>
       <div class="pd-section-title">${state.fulfillment==='delivery'?'Delivery address':'Pickup location'}</div>
-      <div class="prof-row" style="border-color:var(--neon)">
-        <div class="ic">${state.fulfillment==='delivery'?'📍':'🏪'}</div>
-        <div style="flex:1">
-          <div style="font-weight:600;font-size:13px">${state.fulfillment==='delivery'?'Home · 123 Main St':'Munchies Downtown'}</div>
-          <div class="muted tiny" style="margin-top:2px">${state.fulfillment==='delivery'?'Apt 4B · Leave at door':'412 Market Ave · 0.8 mi away'}</div>
+      ${state.fulfillment==='delivery' ? `
+        <div class="prof-row" style="border-color:${addr?'var(--neon)':'var(--gold)'};cursor:pointer" onclick="editAddress()">
+          <div class="ic">📍</div>
+          <div style="flex:1">
+            <div style="font-weight:600;font-size:13px">${addr || '📝 Tap to add your address'}</div>
+            <div class="muted tiny" style="margin-top:2px">${addr ? 'Tap to change address' : 'Required for delivery'}</div>
+          </div>
+          <div style="color:var(--text-mute);font-size:18px">›</div>
         </div>
-      </div>
+      ` : `
+        <div class="prof-row" style="border-color:var(--neon)">
+          <div class="ic">🏪</div>
+          <div style="flex:1">
+            <div style="font-weight:600;font-size:13px">Munchies Downtown</div>
+            <div class="muted tiny" style="margin-top:2px">412 Market Ave · 0.8 mi away</div>
+          </div>
+        </div>
+      `}
       <div class="pd-section-title" style="margin-top:18px">Payment (Stripe test mode)</div>
-    <div class="prof-row" style="border-color:var(--neon);cursor:pointer" onclick="${state.fulfillment==='delivery'?'editAddress()':''}">
-        <div class="ic">${state.fulfillment==='delivery'?'📍':'🏪'}</div>
+      <div class="prof-row" style="border-color:var(--neon)">
+        <div class="ic">💳</div>
         <div style="flex:1">
-          <div style="font-weight:600;font-size:13px">${state.fulfillment==='delivery'?(localStorage.getItem('munchies_address')||'📝 Tap to add your address'):'Munchies Downtown'}</div>
-          <div class="muted tiny" style="margin-top:2px">${state.fulfillment==='delivery'?(localStorage.getItem('munchies_address')?'Tap to change address':'Required for delivery'):'412 Market Ave · 0.8 mi away'}</div>
+          <div style="font-weight:600;font-size:13px">Visa · 4242 (test)</div>
+          <div class="muted tiny" style="margin-top:2px">Test mode — no real charge</div>
         </div>
       </div>
       <div class="pd-section-title" style="margin-top:18px">ID verification</div>
@@ -524,14 +558,14 @@ screens.checkout = () => {
 };
 
 window.placeOrder = async () => {
-  if (state.fulfillment === 'delivery' && !localStorage.getItem('munchies_address')) {
+  if (state.fulfillment === 'delivery' && !getAddress()) {
     toast('Address required', 'Tap the address card to add one');
     return;
   }
   try {
     const r = await api('/orders', { method:'POST', body: {
       fulfillment: state.fulfillment,
-    address: state.fulfillment==='delivery' ? (localStorage.getItem('munchies_address') || '') : null,
+      address: state.fulfillment==='delivery' ? getAddress() : null,
       promo_code: state.promo,
     }});
     state.cart = { items: [], subtotal_cents: 0 };
@@ -577,6 +611,7 @@ async function refreshTracking() {
               <div class="muted tiny">Order #${order.order_no}</div>
             </div>
           </div>
+          ${order.address?`<div class="muted tiny" style="margin-bottom:6px">📍 ${order.address}</div>`:''}
           <div class="between">
             <div>
               <div class="tiny muted">Status</div>
@@ -691,6 +726,7 @@ screens.rewards = () => {
 screens.profile = () => {
   if (!state.user) { nav('login'); return ''; }
   const u = state.user;
+  const addr = getAddress();
   return `
   <div class="screen">
     <div class="scroll">
@@ -708,7 +744,14 @@ screens.profile = () => {
       <div style="padding:0 22px">
         <div class="prof-row" onclick="nav('orders')"><div class="ic">📦</div><div class="lbl">Order history</div></div>
         <div class="prof-row" onclick="nav('rewards')"><div class="ic">⭐</div><div class="lbl">Rewards & points</div><div class="badge gold">${u.loyalty_points} pts</div></div>
-        <div class="prof-row"><div class="ic">📍</div><div class="lbl">Addresses</div></div>
+        <div class="prof-row" onclick="editAddress()" style="cursor:pointer">
+          <div class="ic">📍</div>
+          <div class="lbl">
+            <div style="font-weight:600;font-size:14px">Delivery address</div>
+            <div class="muted tiny" style="margin-top:2px">${addr || 'Tap to add your address'}</div>
+          </div>
+          <div style="color:var(--text-mute);font-size:18px">›</div>
+        </div>
         <div class="prof-row"><div class="ic">💳</div><div class="lbl">Payment methods</div></div>
         <div class="prof-row"><div class="ic">🪪</div><div class="lbl">ID verification</div><div class="badge neon">Verified</div></div>
         <div class="prof-row"><div class="ic">🔔</div><div class="lbl">Notifications</div></div>
@@ -729,13 +772,5 @@ function render() {
 }
 window.render = render;
 window.state = state;
-window.editAddress = () => {
-  const cur = localStorage.getItem('munchies_address') || '';
-  const v = prompt('Enter your delivery address (street, apt, city):', cur);
-  if (v && v.trim()) {
-    localStorage.setItem('munchies_address', v.trim());
-    render();
-  }
-};
 
 init();
