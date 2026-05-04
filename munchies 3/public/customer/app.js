@@ -69,14 +69,148 @@ function getAddressShort() {
   const first = a.split(',')[0].trim();
   return first.length > 22 ? first.slice(0,20) + '…' : first;
 }
+// Inject autocomplete modal styles once
+(function injectAddrCSS(){
+  if (document.getElementById('addr-css')) return;
+  const s = document.createElement('style');
+  s.id = 'addr-css';
+  s.textContent = `
+    .addr-modal{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(10px);z-index:9999;display:flex;flex-direction:column;animation:fadeIn .2s ease}
+    .addr-head{padding:18px 22px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;background:var(--bg)}
+    .addr-head .b{width:40px;height:40px;border-radius:12px;background:var(--surface-2);border:1px solid var(--line);display:grid;place-items:center;cursor:pointer;color:var(--text)}
+    .addr-head .b svg{width:18px;height:18px}
+    .addr-head .t{font-family:'Syne';font-size:18px;font-weight:700;flex:1}
+    .addr-search{padding:14px 22px;background:var(--bg);border-bottom:1px solid var(--line)}
+    .addr-search input{width:100%;background:var(--surface-2);border:1px solid var(--line);border-radius:14px;padding:16px 18px;color:var(--text);font-family:inherit;font-size:15px;outline:none}
+    .addr-search input:focus{border-color:var(--neon)}
+    .addr-results{flex:1;overflow-y:auto;background:var(--bg);padding:10px 0}
+    .addr-result{display:flex;gap:14px;padding:14px 22px;cursor:pointer;border-bottom:1px solid var(--surface-2);align-items:flex-start}
+    .addr-result:hover,.addr-result:active{background:var(--surface-2)}
+    .addr-result .pin{width:36px;height:36px;border-radius:10px;background:var(--surface-3);display:grid;place-items:center;flex-shrink:0;color:var(--neon);font-size:16px}
+    .addr-result .info{flex:1;min-width:0}
+    .addr-result .line1{font-size:14px;font-weight:600;line-height:1.3;color:var(--text)}
+    .addr-result .line2{font-size:12px;color:var(--text-mute);margin-top:3px}
+    .addr-empty{text-align:center;padding:50px 30px;color:var(--text-mute);font-size:13px}
+    .addr-empty .em{font-size:42px;margin-bottom:10px;opacity:.6}
+    .addr-loading{text-align:center;padding:30px}
+    .addr-loading .spinner{margin:0 auto;width:24px;height:24px;border:2px solid var(--line);border-top-color:var(--neon);border-radius:50%;animation:spin .8s linear infinite}
+    .addr-foot{padding:14px 22px 22px;border-top:1px solid var(--line);background:var(--bg)}
+    .addr-manual{font-size:12px;color:var(--text-mute);text-align:center;line-height:1.5}
+    .addr-manual a{color:var(--neon);cursor:pointer;font-weight:600}
+  `;
+  document.head.appendChild(s);
+})();
+
 window.editAddress = () => {
   const cur = getAddress();
-  const v = prompt('Enter your delivery address (street, apt, city, state, zip):', cur);
-  if (v !== null && v.trim()) {
-    localStorage.setItem('munchies_address', v.trim());
-    toast('Address saved', v.trim());
-    render();
+  const host = document.createElement('div');
+  host.id = 'addr-modal-host';
+  host.innerHTML = `
+    <div class="addr-modal">
+      <div class="addr-head">
+        <div class="b" onclick="closeAddrModal()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></div>
+        <div class="t">Delivery address</div>
+      </div>
+      <div class="addr-search">
+        <input id="addr-input" type="text" placeholder="Start typing your address..." value="${cur.replace(/"/g,'&quot;')}" autocomplete="off" autocorrect="off" spellcheck="false" />
+      </div>
+      <div class="addr-results" id="addr-results">
+        <div class="addr-empty"><div class="em">📍</div>Type at least 3 letters to search<br/>for your address</div>
+      </div>
+      <div class="addr-foot">
+        <div class="addr-manual">Can't find your address? <a onclick="useTypedAddress()">Use what I typed</a></div>
+      </div>
+    </div>`;
+  document.body.appendChild(host);
+  const inp = document.getElementById('addr-input');
+  setTimeout(() => { inp.focus(); inp.select(); }, 100);
+  inp.addEventListener('input', onAddrInput);
+  inp.addEventListener('keydown', e => { if (e.key === 'Escape') closeAddrModal(); });
+  // If pre-filled, run a search to show suggestions
+  if (cur.length >= 3) onAddrInput();
+};
+
+let addrDebounce;
+function onAddrInput() {
+  clearTimeout(addrDebounce);
+  const q = document.getElementById('addr-input').value.trim();
+  const results = document.getElementById('addr-results');
+  if (q.length < 3) {
+    results.innerHTML = `<div class="addr-empty"><div class="em">📍</div>Type at least 3 letters to search<br/>for your address</div>`;
+    return;
   }
+  results.innerHTML = `<div class="addr-loading"><div class="spinner"></div></div>`;
+  addrDebounce = setTimeout(async () => {
+    try {
+      const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=8&lang=en`;
+      const r = await fetch(url);
+      const d = await r.json();
+      renderAddrResults(d.features || [], q);
+    } catch (e) {
+      results.innerHTML = `<div class="addr-empty"><div class="em">⚠️</div>Search failed. Tap "Use what I typed" below to enter manually.</div>`;
+    }
+  }, 350);
+}
+
+function renderAddrResults(features, q) {
+  const results = document.getElementById('addr-results');
+  if (!features.length) {
+    results.innerHTML = `<div class="addr-empty"><div class="em">🔍</div>No matches for "${q}"<br/><span style="font-size:11px">Try adding a city or zip code, or tap "Use what I typed" below.</span></div>`;
+    return;
+  }
+  results.innerHTML = features.map((f, i) => {
+    const p = f.properties || {};
+    const housenumber = p.housenumber || '';
+    const street = p.street || p.name || '';
+    const line1Parts = [housenumber, street].filter(Boolean).join(' ') || p.name || 'Unnamed location';
+    const line2Parts = [p.city, p.state, p.postcode, p.country].filter(Boolean).join(', ');
+    const fullAddress = [line1Parts, line2Parts].filter(Boolean).join(', ');
+    return `
+      <div class="addr-result" onclick="pickAddress(${i})">
+        <div class="pin">📍</div>
+        <div class="info">
+          <div class="line1">${escapeHtml(line1Parts)}</div>
+          <div class="line2">${escapeHtml(line2Parts || '—')}</div>
+        </div>
+      </div>`;
+  }).join('');
+  // Stash features so click handler can read them
+  window._addrFeatures = features.map((f) => {
+    const p = f.properties || {};
+    const housenumber = p.housenumber || '';
+    const street = p.street || p.name || '';
+    const line1 = [housenumber, street].filter(Boolean).join(' ') || p.name || '';
+    const line2 = [p.city, p.state, p.postcode, p.country].filter(Boolean).join(', ');
+    return [line1, line2].filter(Boolean).join(', ');
+  });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+window.pickAddress = (i) => {
+  const addr = (window._addrFeatures || [])[i];
+  if (!addr) return;
+  localStorage.setItem('munchies_address', addr);
+  toast('Address saved', addr);
+  closeAddrModal();
+  render();
+};
+
+window.useTypedAddress = () => {
+  const v = document.getElementById('addr-input').value.trim();
+  if (!v) { toast('Empty address', 'Please type something first'); return; }
+  if (v.length < 6) { toast('Address too short', 'Please type a complete address'); return; }
+  localStorage.setItem('munchies_address', v);
+  toast('Address saved', v);
+  closeAddrModal();
+  render();
+};
+
+window.closeAddrModal = () => {
+  const h = document.getElementById('addr-modal-host');
+  if (h) h.remove();
 };
 
 // ===== Navigation =====
