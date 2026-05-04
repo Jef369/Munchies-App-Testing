@@ -876,8 +876,8 @@ screens.profile = () => {
         </div>
       </div>
       <div style="padding:0 22px">
-        <div class="prof-row" onclick="nav('orders')"><div class="ic">📦</div><div class="lbl">Order history</div></div>
-        <div class="prof-row" onclick="nav('rewards')"><div class="ic">⭐</div><div class="lbl">Rewards & points</div><div class="badge gold">${u.loyalty_points} pts</div></div>
+        <div class="prof-row" onclick="nav('orders')"><div class="ic">📦</div><div class="lbl">Order history</div><div style="color:var(--text-mute);font-size:18px">›</div></div>
+        <div class="prof-row" onclick="nav('rewards')"><div class="ic">⭐</div><div class="lbl">Rewards & points</div><div class="badge gold">${u.loyalty_points} pts</div><div style="color:var(--text-mute);font-size:18px">›</div></div>
         <div class="prof-row" onclick="editAddress()" style="cursor:pointer">
           <div class="ic">📍</div>
           <div class="lbl">
@@ -886,14 +886,266 @@ screens.profile = () => {
           </div>
           <div style="color:var(--text-mute);font-size:18px">›</div>
         </div>
-        <div class="prof-row"><div class="ic">💳</div><div class="lbl">Payment methods</div></div>
-        <div class="prof-row"><div class="ic">🪪</div><div class="lbl">ID verification</div><div class="badge neon">Verified</div></div>
-        <div class="prof-row"><div class="ic">🔔</div><div class="lbl">Notifications</div></div>
-        <div class="prof-row"><div class="ic">❓</div><div class="lbl">Help & support</div></div>
+        <div class="prof-row" onclick="nav('payments')"><div class="ic">💳</div><div class="lbl">Payment methods</div><div style="color:var(--text-mute);font-size:18px">›</div></div>
+        <div class="prof-row" onclick="nav('idverify')"><div class="ic">🪪</div><div class="lbl">ID verification</div><div class="badge neon">Verified</div><div style="color:var(--text-mute);font-size:18px">›</div></div>
+        <div class="prof-row" onclick="nav('notifications')"><div class="ic">🔔</div><div class="lbl">Notifications</div><div style="color:var(--text-mute);font-size:18px">›</div></div>
+        <div class="prof-row" onclick="nav('support')"><div class="ic">❓</div><div class="lbl">Help & support</div><div style="color:var(--text-mute);font-size:18px">›</div></div>
         <div class="prof-row" onclick="doLogout()" style="margin-top:14px;color:var(--danger)"><div class="ic">↪</div><div class="lbl" style="color:var(--danger)">Sign out</div></div>
       </div>
     </div>
   </div>`;
+};
+
+// ===== Payment methods =====
+screens.payments = () => `
+  <div class="screen">
+    <div class="simple-header">
+      <div class="b" onclick="back()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg></div>
+      <div class="t">Payment methods</div>
+    </div>
+    <div class="scroll" style="padding:12px 22px 40px">
+      <div class="prof-row" style="border-color:var(--neon)">
+        <div class="ic">💳</div>
+        <div style="flex:1">
+          <div style="font-weight:600;font-size:13px">Visa · 4242 (test)</div>
+          <div class="muted tiny" style="margin-top:2px">Expires 09/28 · Default</div>
+        </div>
+        <div class="badge neon">Default</div>
+      </div>
+      <div class="prof-row" onclick="toast('Coming soon','Real card adding requires Stripe live keys')" style="cursor:pointer">
+        <div class="ic">+</div>
+        <div class="lbl">Add new card</div>
+        <div style="color:var(--text-mute);font-size:18px">›</div>
+      </div>
+      <div class="prof-row" onclick="toast('Apple Pay','Available once Stripe is connected')" style="cursor:pointer">
+        <div class="ic">🍎</div>
+        <div class="lbl">Apple Pay</div>
+        <div class="badge">Coming soon</div>
+      </div>
+      <div class="prof-row" onclick="toast('Google Pay','Available once Stripe is connected')" style="cursor:pointer">
+        <div class="ic">G</div>
+        <div class="lbl">Google Pay</div>
+        <div class="badge">Coming soon</div>
+      </div>
+      <div style="background:rgba(212,175,55,.06);border:1px solid rgba(212,175,55,.3);border-radius:14px;padding:14px;margin-top:18px">
+        <div style="font-size:11px;color:var(--gold);font-weight:700;text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">⚡ Stripe test mode</div>
+        <div style="font-size:13px;color:var(--text-dim);line-height:1.5">Currently in test mode — no real charges. Connect live Stripe keys to accept real payments.</div>
+      </div>
+      <div style="background:var(--surface-2);border:1px solid var(--line);border-radius:14px;padding:14px;margin-top:10px">
+        <div style="font-size:11px;color:var(--text-dim);font-weight:700;text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">🔒 Your privacy</div>
+        <div style="font-size:13px;color:var(--text-dim);line-height:1.5">Card details are encrypted and stored by Stripe, never on our servers. PCI-DSS compliant.</div>
+      </div>
+    </div>
+  </div>`;
+
+// ===== ID Verification =====
+screens.idverify = () => `
+  <div class="screen">
+    <div class="simple-header">
+      <div class="b" onclick="back()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg></div>
+      <div class="t">ID verification</div>
+    </div>
+    <div class="scroll" style="padding:20px 22px 40px">
+      <div style="text-align:center;padding:24px 0 18px">
+        <div style="width:84px;height:84px;border-radius:24px;background:linear-gradient(135deg,rgba(198,255,61,.15),rgba(198,255,61,.05));border:1px solid rgba(198,255,61,.3);display:grid;place-items:center;margin:0 auto 16px;box-shadow:0 0 40px rgba(198,255,61,.15)">
+          <span style="font-size:42px">✓</span>
+        </div>
+        <h2 style="font-family:'Syne';font-size:22px;font-weight:700;margin-bottom:6px">Verified</h2>
+        <p class="muted tiny" style="line-height:1.5">Your ID was verified at signup. You're cleared to order hemp & THCA products.</p>
+      </div>
+      <div class="prof-row" style="border-color:var(--neon)">
+        <div class="ic">🪪</div>
+        <div style="flex:1">
+          <div style="font-weight:600;font-size:13px">Driver's License · ${state.user?.name||''}</div>
+          <div class="muted tiny" style="margin-top:2px">Verified · 21+ confirmed</div>
+        </div>
+        <div class="badge neon">Active</div>
+      </div>
+      <div class="prof-row">
+        <div class="ic">📅</div>
+        <div style="flex:1">
+          <div style="font-weight:600;font-size:13px">Verified since</div>
+          <div class="muted tiny" style="margin-top:2px">${state.user?.created_at ? new Date(state.user.created_at).toLocaleDateString() : '—'}</div>
+        </div>
+      </div>
+      <div class="prof-row" onclick="toast('Driver re-checks ID','Your driver will scan again at every delivery')" style="cursor:pointer">
+        <div class="ic">🚚</div>
+        <div style="flex:1">
+          <div style="font-weight:600;font-size:13px">Delivery ID check</div>
+          <div class="muted tiny" style="margin-top:2px">Driver scans your ID at the door</div>
+        </div>
+      </div>
+      <div class="prof-row" onclick="toast('Re-verification','Coming soon \u2014 contact support to update your ID')" style="cursor:pointer;margin-top:14px">
+        <div class="ic">🔄</div>
+        <div class="lbl">Re-verify ID</div>
+        <div style="color:var(--text-mute);font-size:18px">›</div>
+      </div>
+      <div style="background:rgba(212,175,55,.06);border:1px solid rgba(212,175,55,.3);border-radius:14px;padding:14px;margin-top:18px">
+        <div style="font-size:11px;color:var(--gold);font-weight:700;text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">🔒 Privacy & compliance</div>
+        <div style="font-size:13px;color:var(--text-dim);line-height:1.5">ID images are processed via secure third-party verification (Persona/Veriff in production). We don't store ID photos on our servers.</div>
+      </div>
+    </div>
+  </div>`;
+
+// ===== Notification settings =====
+function getNotifPref(key, def = true) {
+  const v = localStorage.getItem('munchies_notif_' + key);
+  return v === null ? def : v === '1';
+}
+window.toggleNotif = (key) => {
+  const cur = getNotifPref(key);
+  localStorage.setItem('munchies_notif_' + key, cur ? '0' : '1');
+  toast(cur ? 'Off' : 'On', `${key.replace(/_/g,' ')} notifications ${cur ? 'disabled' : 'enabled'}`);
+  render();
+};
+function notifRow(key, em, title, desc) {
+  const on = getNotifPref(key);
+  return `
+    <div class="prof-row" onclick="toggleNotif('${key}')" style="cursor:pointer">
+      <div class="ic">${em}</div>
+      <div style="flex:1">
+        <div style="font-weight:600;font-size:13px">${title}</div>
+        <div class="muted tiny" style="margin-top:2px">${desc}</div>
+      </div>
+      <div style="width:42px;height:24px;border-radius:99px;background:${on?'var(--ok,#3ddc84)':'var(--surface-3)'};position:relative;transition:background .2s">
+        <div style="position:absolute;top:2px;${on?'right:2px':'left:2px'};width:20px;height:20px;border-radius:50%;background:#fff;transition:all .2s;box-shadow:0 1px 3px rgba(0,0,0,.3)"></div>
+      </div>
+    </div>`;
+}
+screens.notifications = () => `
+  <div class="screen">
+    <div class="simple-header">
+      <div class="b" onclick="back()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg></div>
+      <div class="t">Notifications</div>
+    </div>
+    <div class="scroll" style="padding:12px 22px 40px">
+      <div class="pd-section-title" style="margin-top:8px">Order updates</div>
+      ${notifRow('order_confirmed', '📦', 'Order confirmed', 'When your order is placed and accepted')}
+      ${notifRow('order_dispatched', '🚚', 'On the way', 'When a driver picks up your order')}
+      ${notifRow('order_delivered', '✅', 'Delivered', 'When your order is dropped off')}
+
+      <div class="pd-section-title" style="margin-top:18px">Marketing</div>
+      ${notifRow('promos', '🔥', 'Promos & deals', 'Discounts, flash sales, weekly drops')}
+      ${notifRow('new_products', '🌿', 'New products', 'When fresh strains and new items hit')}
+      ${notifRow('rewards', '⭐', 'Rewards updates', 'Tier upgrades and earned points')}
+
+      <div class="pd-section-title" style="margin-top:18px">Channels</div>
+      ${notifRow('channel_push', '📱', 'Push notifications', 'On your phone via this app')}
+      ${notifRow('channel_email', '📧', 'Email', 'Sent to your registered email')}
+      ${notifRow('channel_sms', '💬', 'SMS / Text', 'Text messages to your phone')}
+
+      <div style="background:var(--surface-2);border:1px solid var(--line);border-radius:14px;padding:14px;margin-top:18px">
+        <div style="font-size:11px;color:var(--text-dim);font-weight:700;text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">ℹ️ Note</div>
+        <div style="font-size:13px;color:var(--text-dim);line-height:1.5">Preferences save instantly. Push and SMS delivery require browser permission and Twilio integration (admin setup).</div>
+      </div>
+    </div>
+  </div>`;
+
+// ===== Help & Support =====
+screens.support = () => `
+  <div class="screen">
+    <div class="simple-header">
+      <div class="b" onclick="back()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg></div>
+      <div class="t">Help & support</div>
+    </div>
+    <div class="scroll" style="padding:12px 22px 40px">
+      <div class="hero" style="margin:0 0 18px;cursor:default">
+        <div class="badge neon" style="margin-bottom:10px">⚡ We respond fast</div>
+        <h2 style="font-size:20px;line-height:1.2">Need a hand?</h2>
+        <p>Real humans, real answers. We're here 7 days a week, 9am–10pm.</p>
+      </div>
+
+      <div class="pd-section-title">Contact us</div>
+      <div class="prof-row" onclick="window.location.href='mailto:support@munchies.test'" style="cursor:pointer">
+        <div class="ic">📧</div>
+        <div style="flex:1">
+          <div style="font-weight:600;font-size:13px">Email support</div>
+          <div class="muted tiny" style="margin-top:2px">support@munchies.test</div>
+        </div>
+        <div style="color:var(--text-mute);font-size:18px">›</div>
+      </div>
+      <div class="prof-row" onclick="window.location.href='tel:+15555550100'" style="cursor:pointer">
+        <div class="ic">📞</div>
+        <div style="flex:1">
+          <div style="font-weight:600;font-size:13px">Call us</div>
+          <div class="muted tiny" style="margin-top:2px">(555) 555-0100 · 9am–10pm</div>
+        </div>
+        <div style="color:var(--text-mute);font-size:18px">›</div>
+      </div>
+      <div class="prof-row" onclick="window.location.href='sms:+15555550100'" style="cursor:pointer">
+        <div class="ic">💬</div>
+        <div style="flex:1">
+          <div style="font-weight:600;font-size:13px">Text us</div>
+          <div class="muted tiny" style="margin-top:2px">Fastest for quick questions</div>
+        </div>
+        <div style="color:var(--text-mute);font-size:18px">›</div>
+      </div>
+
+      <div class="pd-section-title" style="margin-top:18px">FAQ</div>
+      <div class="prof-row" onclick="toggleFaq('delivery')" style="cursor:pointer;flex-direction:column;align-items:stretch">
+        <div style="display:flex;gap:14px;align-items:center;width:100%">
+          <div class="ic">🚀</div>
+          <div style="flex:1;font-weight:600;font-size:13px">How fast is delivery?</div>
+          <div style="color:var(--text-mute);font-size:18px" id="faq-arrow-delivery">›</div>
+        </div>
+        <div id="faq-delivery" style="display:none;padding:10px 0 0 50px;font-size:12px;color:var(--text-dim);line-height:1.6">Most orders arrive within 45 minutes. ASAP delivery is our default — we also offer scheduled delivery in 1-hour windows.</div>
+      </div>
+      <div class="prof-row" onclick="toggleFaq('age')" style="cursor:pointer;flex-direction:column;align-items:stretch">
+        <div style="display:flex;gap:14px;align-items:center;width:100%">
+          <div class="ic">🪪</div>
+          <div style="flex:1;font-weight:600;font-size:13px">Why do you check ID?</div>
+          <div style="color:var(--text-mute);font-size:18px" id="faq-arrow-age">›</div>
+        </div>
+        <div id="faq-age" style="display:none;padding:10px 0 0 50px;font-size:12px;color:var(--text-dim);line-height:1.6">Federal & state law requires us to verify all customers are 21+. Your driver will scan your ID at delivery — no exceptions.</div>
+      </div>
+      <div class="prof-row" onclick="toggleFaq('legal')" style="cursor:pointer;flex-direction:column;align-items:stretch">
+        <div style="display:flex;gap:14px;align-items:center;width:100%">
+          <div class="ic">⚖️</div>
+          <div style="flex:1;font-weight:600;font-size:13px">Are these products legal?</div>
+          <div style="color:var(--text-mute);font-size:18px" id="faq-arrow-legal">›</div>
+        </div>
+        <div id="faq-legal" style="display:none;padding:10px 0 0 50px;font-size:12px;color:var(--text-dim);line-height:1.6">All Munchies products are derived from federally legal hemp containing less than 0.3% Delta-9 THC by dry weight per the 2018 Farm Bill. Lab-tested, COA available on request.</div>
+      </div>
+      <div class="prof-row" onclick="toggleFaq('refund')" style="cursor:pointer;flex-direction:column;align-items:stretch">
+        <div style="display:flex;gap:14px;align-items:center;width:100%">
+          <div class="ic">💸</div>
+          <div style="flex:1;font-weight:600;font-size:13px">Refund policy</div>
+          <div style="color:var(--text-mute);font-size:18px" id="faq-arrow-refund">›</div>
+        </div>
+        <div id="faq-refund" style="display:none;padding:10px 0 0 50px;font-size:12px;color:var(--text-dim);line-height:1.6">If your order arrives damaged, missing, or wrong, contact us within 24 hours for a full refund or replacement. Unopened products only.</div>
+      </div>
+      <div class="prof-row" onclick="toggleFaq('zones')" style="cursor:pointer;flex-direction:column;align-items:stretch">
+        <div style="display:flex;gap:14px;align-items:center;width:100%">
+          <div class="ic">📍</div>
+          <div style="flex:1;font-weight:600;font-size:13px">Where do you deliver?</div>
+          <div style="color:var(--text-mute);font-size:18px" id="faq-arrow-zones">›</div>
+        </div>
+        <div id="faq-zones" style="display:none;padding:10px 0 0 50px;font-size:12px;color:var(--text-dim);line-height:1.6">We currently deliver within a 15-mile radius of our store. Enter your address at checkout to confirm coverage.</div>
+      </div>
+
+      <div class="pd-section-title" style="margin-top:18px">Legal</div>
+      <div class="prof-row" onclick="toast('Terms','Opening Terms of Service')" style="cursor:pointer">
+        <div class="ic">📄</div>
+        <div class="lbl">Terms of Service</div>
+        <div style="color:var(--text-mute);font-size:18px">›</div>
+      </div>
+      <div class="prof-row" onclick="toast('Privacy','Opening Privacy Policy')" style="cursor:pointer">
+        <div class="ic">🔒</div>
+        <div class="lbl">Privacy Policy</div>
+        <div style="color:var(--text-mute);font-size:18px">›</div>
+      </div>
+
+      <p class="muted tiny" style="text-align:center;margin-top:24px">Munchies v0.1.0 · Made with 🌿</p>
+    </div>
+  </div>`;
+
+window.toggleFaq = (key) => {
+  const el = document.getElementById('faq-' + key);
+  const arrow = document.getElementById('faq-arrow-' + key);
+  if (!el) return;
+  const isOpen = el.style.display !== 'none';
+  el.style.display = isOpen ? 'none' : 'block';
+  if (arrow) arrow.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(90deg)';
 };
 
 // ===== Render =====
