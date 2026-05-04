@@ -295,18 +295,92 @@ screens.signup = () => `
       <div class="b" onclick="nav('login')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg></div>
       <div class="t">Create account</div>
     </div>
-    <div style="padding:8px 28px;flex:1;display:flex;flex-direction:column;gap:10px;overflow-y:auto">
+    <div class="scroll" style="padding:8px 28px 40px;display:flex;flex-direction:column;gap:10px">
       <h2 style="font-size:22px;margin:14px 0 8px">Get started</h2>
-      <div class="field"><label>Name</label><input id="su-name" placeholder="Your name"/></div>
-      <div class="field"><label>Email</label><input id="su-email" type="email" placeholder="you@example.com"/></div>
-      <div class="field"><label>Phone</label><input id="su-phone" type="tel" placeholder="+1 (555) 123-4567"/></div>
-      <div class="field"><label>Password</label><input id="su-pw" type="password" placeholder="At least 8 characters"/></div>
-      <label style="display:flex;gap:10px;align-items:flex-start;font-size:12px;color:var(--text-dim);line-height:1.5"><input id="su-age" type="checkbox" checked style="margin-top:3px"/> I confirm I am 21+ years old</label>
-      ${state.error ? `<div class="error">${state.error}</div>`:''}
-      <button class="btn btn-primary" style="margin-top:14px" onclick="doSignup()">Create account</button>
-      <p class="tiny muted" style="text-align:center;padding:10px 0 20px">By signing up you agree to our Terms & Privacy Policy.</p>
+
+      <div class="field"><label>Full name *</label><input id="su-name" placeholder="Your full name (as on ID)" autocapitalize="words"/></div>
+
+      <div class="field"><label>Email *</label><input id="su-email" type="email" placeholder="you@example.com" autocapitalize="none" autocorrect="off"/></div>
+
+      <div class="field"><label>Mobile phone *</label><input id="su-phone" type="tel" placeholder="+1 (555) 123-4567"/></div>
+
+      <div class="field">
+        <label>Date of birth * <span style="text-transform:none;letter-spacing:0;font-weight:400;color:var(--text-mute)">(must be 21+)</span></label>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1.3fr;gap:8px">
+          <input id="su-dob-m" type="number" min="1" max="12" placeholder="MM" inputmode="numeric"/>
+          <input id="su-dob-d" type="number" min="1" max="31" placeholder="DD" inputmode="numeric"/>
+          <input id="su-dob-y" type="number" min="1900" max="2010" placeholder="YYYY" inputmode="numeric"/>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Password * <span style="text-transform:none;letter-spacing:0;font-weight:400;color:var(--text-mute)">(min 8 characters)</span></label>
+        <input id="su-pw" type="password" placeholder="At least 8 characters" oninput="updatePwStrength()"/>
+        <div style="height:4px;background:var(--surface-3);border-radius:99px;margin-top:6px;overflow:hidden"><div id="su-pw-strength-bar" style="height:100%;width:0%;background:var(--danger);transition:all .2s"></div></div>
+        <div id="su-pw-hint" class="muted tiny" style="margin-top:4px">Use 8+ characters with letters and numbers</div>
+      </div>
+
+      <div class="field">
+        <label>Confirm password *</label>
+        <input id="su-pw2" type="password" placeholder="Re-enter your password" oninput="checkPwMatch()"/>
+        <div id="su-pw-match" class="tiny" style="margin-top:4px;color:var(--text-mute)">Passwords must match</div>
+      </div>
+
+      <label style="display:flex;gap:10px;align-items:flex-start;font-size:12px;color:var(--text-dim);line-height:1.5;margin-top:8px"><input id="su-age" type="checkbox" checked style="margin-top:3px"/> I certify the date of birth above is accurate and I am 21+ years old.</label>
+
+      ${state.error ? `<div style="background:rgba(255,91,110,.08);border:1px solid rgba(255,91,110,.3);padding:12px;border-radius:10px;margin-top:8px;font-size:12px;color:var(--danger);line-height:1.5">${state.error}${(state.error.includes('failed')||state.error.includes('Network')||state.error.includes('fetch'))?'<div style="margin-top:8px;color:var(--text-dim)">💡 Free hosting may take ~30 seconds to wake up. Try again in a moment.</div>':''}</div>`:''}
+
+      <button class="btn btn-primary" style="margin-top:14px" id="su-btn" onclick="doSignup()">Create account</button>
+
+      <p class="tiny muted" style="text-align:center;padding:10px 0 0">By signing up you agree to our <a style="color:var(--neon);cursor:pointer" onclick="nav('support')">Terms & Privacy Policy</a>.</p>
     </div>
   </div>`;
+
+window.updatePwStrength = () => {
+  const pw = document.getElementById('su-pw').value;
+  const bar = document.getElementById('su-pw-strength-bar');
+  const hint = document.getElementById('su-pw-hint');
+  if (!bar) return;
+  let score = 0;
+  if (pw.length >= 8) score++;
+  if (/[A-Z]/.test(pw)) score++;
+  if (/[0-9]/.test(pw)) score++;
+  if (/[^A-Za-z0-9]/.test(pw)) score++;
+  if (pw.length >= 12) score++;
+  const colors = ['var(--danger)','var(--danger)','#ffb547','#ffb547','var(--neon)','var(--neon)'];
+  const widths = [0, 25, 45, 65, 85, 100];
+  const labels = ['Too short','Weak','Fair','Good','Strong','Excellent'];
+  bar.style.width = widths[score] + '%';
+  bar.style.background = colors[score];
+  if (hint) {
+    hint.textContent = pw.length === 0 ? 'Use 8+ characters with letters and numbers' : 'Strength: ' + labels[score];
+    hint.style.color = score >= 3 ? 'var(--neon)' : score >= 2 ? '#ffb547' : 'var(--text-mute)';
+  }
+  const pw2 = document.getElementById('su-pw2');
+  if (pw2 && pw2.value) checkPwMatch();
+};
+
+window.checkPwMatch = () => {
+  const pw = document.getElementById('su-pw').value;
+  const pw2 = document.getElementById('su-pw2').value;
+  const el = document.getElementById('su-pw-match');
+  if (!el) return;
+  if (!pw2) { el.textContent = 'Passwords must match'; el.style.color = 'var(--text-mute)'; return; }
+  if (pw === pw2) { el.textContent = '✓ Passwords match'; el.style.color = 'var(--neon)'; }
+  else { el.textContent = "✗ Passwords don't match"; el.style.color = 'var(--danger)'; }
+};
+
+function calculateAge(month, day, year) {
+  const today = new Date();
+  const birth = new Date(year, month - 1, day);
+  if (isNaN(birth.getTime()) || birth.getMonth() !== month - 1) return -1;
+  let age = today.getFullYear() - birth.getFullYear();
+  const m = today.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
+  return age;
+}
+
+function isValidEmail(e) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e); }
 
 window.doLogin = async () => {
   const email = document.getElementById('li-email').value.trim();
@@ -323,20 +397,58 @@ window.doLogin = async () => {
 
 window.doSignup = async () => {
   state.error = null;
+  const name = document.getElementById('su-name').value.trim();
+  const email = document.getElementById('su-email').value.trim().toLowerCase();
+  const phone = document.getElementById('su-phone').value.trim();
+  const password = document.getElementById('su-pw').value;
+  const password2 = document.getElementById('su-pw2').value;
+  const dobM = parseInt(document.getElementById('su-dob-m').value, 10);
+  const dobD = parseInt(document.getElementById('su-dob-d').value, 10);
+  const dobY = parseInt(document.getElementById('su-dob-y').value, 10);
+  const ageOk = document.getElementById('su-age').checked;
+
+  // Client-side validation — fail fast with specific error messages
+  if (!name || name.length < 2) { state.error = 'Please enter your full name.'; render(); return; }
+  if (!isValidEmail(email)) { state.error = 'Please enter a valid email address.'; render(); return; }
+  if (!phone || phone.replace(/\D/g,'').length < 10) { state.error = 'Please enter a valid mobile phone number.'; render(); return; }
+  if (!dobM || !dobD || !dobY) { state.error = 'Please enter your full date of birth (month, day, year).'; render(); return; }
+  const age = calculateAge(dobM, dobD, dobY);
+  if (age < 0) { state.error = 'Please enter a valid date of birth.'; render(); return; }
+  if (age < 21) { state.error = `You must be 21 or older to use Munchies. You entered an age of ${age}.`; render(); return; }
+  if (age > 120) { state.error = 'Please enter a valid year of birth.'; render(); return; }
+  if (!password || password.length < 8) { state.error = 'Password must be at least 8 characters.'; render(); return; }
+  if (password !== password2) { state.error = "Passwords don't match. Please re-enter."; render(); return; }
+  if (!ageOk) { state.error = 'Please confirm you are 21+ years old.'; render(); return; }
+
+  // Set loading state
+  const btn = document.getElementById('su-btn');
+  if (btn) { btn.textContent = 'Creating your account…'; btn.disabled = true; btn.style.opacity = '0.7'; }
+
   const body = {
-    name: document.getElementById('su-name').value.trim(),
-    email: document.getElementById('su-email').value.trim(),
-    phone: document.getElementById('su-phone').value.trim(),
-    password: document.getElementById('su-pw').value,
-    age_ok: document.getElementById('su-age').checked,
+    name,
+    email,
+    phone,
+    password,
+    age_ok: true,
+    dob: `${dobY}-${String(dobM).padStart(2,'0')}-${String(dobD).padStart(2,'0')}`,
   };
+
   try {
     const { user } = await api('/auth/signup', { method: 'POST', body });
     state.user = user;
     await refreshCart();
     toast('Welcome to Munchies', '🎁 You unlocked FIRST20 — 20% off');
     nav('home');
-  } catch (e) { state.error = e.message; render(); }
+  } catch (e) {
+    let msg = e.message || 'Sign up failed.';
+    // Translate common errors into friendlier text
+    if (msg.includes('already registered')) msg = 'That email is already registered. Try signing in instead.';
+    else if (msg === 'Failed to fetch' || msg.includes('Network') || msg.includes('failed')) {
+      msg = "Couldn't reach the server. The app may be waking up — please try again in a few seconds.";
+    }
+    state.error = msg;
+    render();
+  }
 };
 
 window.doLogout = async () => {
