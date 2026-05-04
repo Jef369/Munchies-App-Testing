@@ -30,20 +30,34 @@ const state = {
   error: null,
 };
 
-// ===== API helper =====
+// ===== API helper (with 60s timeout — Render free tier can take ~50s to wake from sleep) =====
 async function api(path, opts = {}) {
-  const r = await fetch(API + path, {
-    method: opts.method || 'GET',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
-  });
-  if (!r.ok) {
-    const e = await r.json().catch(()=>({error:'request failed'}));
-    throw new Error(e.error || 'request failed');
+  const controller = new AbortController();
+  const timeoutMs = opts.timeout || 60000;
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const r = await fetch(API + path, {
+      method: opts.method || 'GET',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    if (!r.ok) {
+      const e = await r.json().catch(()=>({error:`request failed (${r.status})`}));
+      throw new Error(e.error || `request failed (${r.status})`);
+    }
+    return r.json();
+  } catch (e) {
+    clearTimeout(timeoutId);
+    if (e.name === 'AbortError') throw new Error('Server is taking too long to respond. It may be waking up — please try again in a moment.');
+    throw e;
   }
-  return r.json();
 }
+
+// Pre-warm server on app load so first user request is fast (Render free tier sleeps after 15min idle)
+fetch(API + '/categories', { credentials: 'include' }).catch(()=>{});
 
 // ===== Toast =====
 function toast(title, body) {
@@ -443,10 +457,12 @@ window.doSignup = async () => {
     let msg = e.message || 'Sign up failed.';
     // Translate common errors into friendlier text
     if (msg.includes('already registered')) msg = 'That email is already registered. Try signing in instead.';
-    else if (msg === 'Failed to fetch' || msg.includes('Network') || msg.includes('failed')) {
-      msg = "Couldn't reach the server. The app may be waking up — please try again in a few seconds.";
+    else if (msg === 'Failed to fetch' || msg === 'Load failed' || msg.includes('Network')) {
+      msg = "Couldn't reach the server. The app may be waking up — please try again in 30 seconds.";
     }
     state.error = msg;
+    // Reset button so user can retry (render() rebuilds the button anyway, but be explicit)
+    if (btn) { btn.textContent = 'Create account'; btn.disabled = false; btn.style.opacity = '1'; }
     render();
   }
 };
