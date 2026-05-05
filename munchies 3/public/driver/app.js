@@ -124,13 +124,117 @@ window.acceptOrder = async (id) => {
   try { await api(`/driver/orders/${id}/accept`,{method:'POST'}); toast('Order accepted','Head to the store'); await loadQueue(); render(); }
   catch (e) { toast('Failed', e.message); }
 };
-window.openIdModal = (id) => { state.deliveringOrderId = id; document.getElementById('id-modal').classList.add('show'); };
-window.closeIdModal = () => { state.deliveringOrderId = null; document.getElementById('id-modal').classList.remove('show'); };
+// ===== Delivery photo capture =====
+const deliverPhotos = { id: null, proof: null };
+
+window.openIdModal = (id) => {
+  state.deliveringOrderId = id;
+  state.deliverStep = 'id';
+  deliverPhotos.id = null; deliverPhotos.proof = null;
+  renderIdModal();
+  document.getElementById('id-modal').classList.add('show');
+};
+window.closeIdModal = () => {
+  state.deliveringOrderId = null;
+  state.deliverStep = null;
+  document.getElementById('id-modal').classList.remove('show');
+};
+
+function renderIdModal() {
+  const step = state.deliverStep;
+  const card = document.querySelector('#id-modal .id-card');
+  if (!card) return;
+  if (step === 'id') {
+    card.innerHTML = `
+      <h2>Step 1 of 2 · Customer ID</h2>
+      <p>Capture a clear photo of the customer's ID at the door. Confirm name matches order, photo matches person, and DOB shows 21+.</p>
+      ${deliverPhotos.id ? `
+        <div style="background:var(--surface-2);border:1px solid var(--neon);border-radius:14px;padding:10px;margin-bottom:14px">
+          <img src="${deliverPhotos.id}" style="max-width:100%;max-height:240px;border-radius:8px;display:block;margin:0 auto" />
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost" onclick="retakeDeliverPhoto('id')">📷 Retake</button>
+          <button class="btn btn-primary" onclick="state.deliverStep='proof';renderIdModal()">Next →</button>
+        </div>
+      ` : `
+        <div class="scan-frame" onclick="document.getElementById('deliver-cam').click()" style="cursor:pointer">
+          <div>
+            <div class="em">📷</div>
+            <div class="ph">Tap to open camera</div>
+          </div>
+        </div>
+        <input id="deliver-cam" type="file" accept="image/*" capture="environment" onchange="handleDeliverPhoto(event,'id')" style="display:none" />
+        <div style="background:rgba(255,181,71,.08);border:1px solid rgba(255,181,71,.3);border-radius:10px;padding:10px;margin-bottom:14px;font-size:11px;color:var(--warn);text-align:left;line-height:1.5">⚠️ <b>Required:</b> Refuse delivery and tap Cancel if customer is under 21, intoxicated, or won't show ID.</div>
+        <button class="btn btn-ghost" onclick="closeIdModal()">Cancel delivery</button>
+      `}
+    `;
+  } else if (step === 'proof') {
+    card.innerHTML = `
+      <h2>Step 2 of 2 · Delivery proof</h2>
+      <p>Photo of the order at the door (optional but recommended for dispute protection).</p>
+      ${deliverPhotos.proof ? `
+        <div style="background:var(--surface-2);border:1px solid var(--neon);border-radius:14px;padding:10px;margin-bottom:14px">
+          <img src="${deliverPhotos.proof}" style="max-width:100%;max-height:240px;border-radius:8px;display:block;margin:0 auto" />
+        </div>
+        <button class="btn btn-primary" onclick="confirmDelivery()">✓ Confirm delivery</button>
+        <button class="btn btn-ghost" style="margin-top:8px" onclick="retakeDeliverPhoto('proof')">📷 Retake</button>
+      ` : `
+        <div class="scan-frame" onclick="document.getElementById('proof-cam').click()" style="cursor:pointer">
+          <div>
+            <div class="em">📦</div>
+            <div class="ph">Tap to capture delivery proof</div>
+          </div>
+        </div>
+        <input id="proof-cam" type="file" accept="image/*" capture="environment" onchange="handleDeliverPhoto(event,'proof')" style="display:none" />
+        <button class="btn btn-primary" onclick="confirmDelivery()">Skip & confirm delivery</button>
+        <button class="btn btn-ghost" style="margin-top:8px" onclick="state.deliverStep='id';renderIdModal()">← Back</button>
+      `}
+    `;
+  }
+}
+
+window.handleDeliverPhoto = (event, kind) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => resizeImage(e.target.result, 1400, 0.85, (resized) => {
+    deliverPhotos[kind] = resized;
+    renderIdModal();
+  });
+  reader.readAsDataURL(file);
+};
+
+function resizeImage(dataUrl, maxWidth, quality, callback) {
+  const img = new Image();
+  img.onload = () => {
+    const ratio = img.width > maxWidth ? maxWidth / img.width : 1;
+    const w = Math.round(img.width * ratio);
+    const h = Math.round(img.height * ratio);
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, w, h);
+    callback(canvas.toDataURL('image/jpeg', quality));
+  };
+  img.src = dataUrl;
+}
+
+window.retakeDeliverPhoto = (kind) => {
+  deliverPhotos[kind] = null;
+  renderIdModal();
+};
+
 window.confirmDelivery = async () => {
   const id = state.deliveringOrderId;
   if (!id) return;
+  if (!deliverPhotos.id) { toast('ID photo required','Capture customer ID first'); return; }
+  toast('Submitting…','Uploading photos');
   try {
-    await api(`/driver/orders/${id}/deliver`,{method:'POST',body:{id_verified:true}});
+    await api(`/driver/orders/${id}/deliver`,{method:'POST',body:{
+      id_verified: true,
+      delivery_id_photo_url: deliverPhotos.id,
+      delivery_proof_photo_url: deliverPhotos.proof,
+    }});
     closeIdModal();
     toast('🎉 Delivered','Great job!');
     await loadQueue(); render();

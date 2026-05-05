@@ -527,11 +527,14 @@ function cartCount() { return state.cart.items.reduce((s,i)=>s+i.qty,0); }
 
 function productCardHTML(p) {
   const minPrice = p.variants && p.variants.length ? Math.min(...p.variants.map(v=>v.price_cents)) : 0;
+  const imageHtml = p.image_url
+    ? `<img src="${p.image_url}" alt="${p.name}" style="width:100%;height:100%;object-fit:cover" onerror="this.replaceWith(Object.assign(document.createElement('span'),{style:'font-size:60px',textContent:'${p.emoji}'}))" />`
+    : `<span style="font-size:60px">${p.emoji}</span>`;
   return `
     <div class="pcard" onclick="openProduct(${p.id})">
-      <div class="img">
+      <div class="img" style="overflow:hidden">
         ${p.tag?`<span class="tag">${p.tag}</span>`:''}
-        <span style="font-size:60px">${p.emoji}</span>
+        ${imageHtml}
       </div>
       <div class="meta">
         <div class="title">${p.name}</div>
@@ -608,9 +611,12 @@ screens.product = () => {
   return `
   <div class="screen">
     <div class="scroll" style="padding-bottom:120px">
-      <div class="pd-hero">
+      <div class="pd-hero" style="overflow:hidden">
         <div class="pd-back" onclick="back()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg></div>
-        <div class="emoji">${p.emoji}</div>
+        ${p.image_url
+          ? `<img src="${p.image_url}" alt="${p.name}" style="width:100%;height:100%;object-fit:cover;position:absolute;top:0;left:0" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'emoji',textContent:'${p.emoji}'}))" />`
+          : `<div class="emoji">${p.emoji}</div>`
+        }
       </div>
       <div class="pd-body">
         <div class="pd-strain-row">
@@ -688,7 +694,7 @@ screens.cart = () => {
         </div>
         ${items.map(it=>`
           <div class="cart-item">
-            <div class="ci-img">${it.emoji}</div>
+            <div class="ci-img" style="overflow:hidden">${it.image_url?`<img src="${it.image_url}" style="width:100%;height:100%;object-fit:cover" alt=""/>`:`<span style="font-size:30px">${it.emoji}</span>`}</div>
             <div class="ci-meta">
               <div class="ci-title">${it.name}</div>
               <div class="ci-sub">${it.size} · ${it.type}</div>
@@ -1015,7 +1021,7 @@ screens.profile = () => {
           <div style="color:var(--text-mute);font-size:18px">›</div>
         </div>
         <div class="prof-row" onclick="nav('payments')"><div class="ic">💳</div><div class="lbl">Payment methods</div><div style="color:var(--text-mute);font-size:18px">›</div></div>
-        <div class="prof-row" onclick="nav('idverify')"><div class="ic">🪪</div><div class="lbl">ID verification</div><div class="badge neon">Verified</div><div style="color:var(--text-mute);font-size:18px">›</div></div>
+        <div class="prof-row" onclick="nav('idverify')"><div class="ic">🪪</div><div class="lbl">ID verification</div>${(()=>{const s=state.user?.verification_status||'unverified';const m={unverified:{l:'Not verified',c:'rgba(255,181,71,.12)',cc:'#ffb547'},pending:{l:'Pending',c:'rgba(255,181,71,.12)',cc:'#ffb547'},approved:{l:'Verified',c:'rgba(198,255,61,.12)',cc:'var(--neon)'},rejected:{l:'Rejected',c:'rgba(255,91,110,.12)',cc:'var(--danger)'}};const t=m[s];return `<div class="badge" style="background:${t.c};color:${t.cc};border-color:${t.cc}">${t.l}</div>`;})()}<div style="color:var(--text-mute);font-size:18px">›</div></div>
         <div class="prof-row" onclick="nav('notifications')"><div class="ic">🔔</div><div class="lbl">Notifications</div><div style="color:var(--text-mute);font-size:18px">›</div></div>
         <div class="prof-row" onclick="nav('support')"><div class="ic">❓</div><div class="lbl">Help & support</div><div style="color:var(--text-mute);font-size:18px">›</div></div>
         <div class="prof-row" onclick="doLogout()" style="margin-top:14px;color:var(--danger)"><div class="ic">↪</div><div class="lbl" style="color:var(--danger)">Sign out</div></div>
@@ -1067,7 +1073,21 @@ screens.payments = () => `
   </div>`;
 
 // ===== ID Verification =====
-screens.idverify = () => `
+// ===== ID Verification — real flow =====
+// Photos are stored in browser memory until the user submits. Resized client-side first.
+const verifPhotos = { front: null, back: null, selfie: null };
+
+screens.idverify = () => {
+  const status = state.user?.verification_status || 'unverified';
+  const themes = {
+    unverified: { color: 'var(--text-mute)', bg: 'rgba(154,154,166,.1)', em: '🪪', title: 'Verify your ID', sub: "We need to confirm you're 21+ before you can place orders." },
+    pending:    { color: 'var(--warn,#ffb547)', bg: 'rgba(255,181,71,.1)', em: '⏳', title: 'Verification pending', sub: 'Your ID is being reviewed. This usually takes a few hours.' },
+    approved:   { color: 'var(--neon)', bg: 'rgba(198,255,61,.1)', em: '✓', title: 'Verified', sub: "You're cleared to order hemp & THCA products." },
+    rejected:   { color: 'var(--danger)', bg: 'rgba(255,91,110,.1)', em: '✗', title: 'Verification rejected', sub: state.user?.verification_notes || 'Please re-submit clearer photos.' },
+  };
+  const t = themes[status] || themes.unverified;
+  const canSubmit = status === 'unverified' || status === 'rejected';
+  return `
   <div class="screen">
     <div class="simple-header">
       <div class="b" onclick="back()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg></div>
@@ -1075,45 +1095,175 @@ screens.idverify = () => `
     </div>
     <div class="scroll" style="padding:20px 22px 40px">
       <div style="text-align:center;padding:24px 0 18px">
-        <div style="width:84px;height:84px;border-radius:24px;background:linear-gradient(135deg,rgba(198,255,61,.15),rgba(198,255,61,.05));border:1px solid rgba(198,255,61,.3);display:grid;place-items:center;margin:0 auto 16px;box-shadow:0 0 40px rgba(198,255,61,.15)">
-          <span style="font-size:42px">✓</span>
+        <div style="width:84px;height:84px;border-radius:24px;background:${t.bg};border:1px solid ${t.color};display:grid;place-items:center;margin:0 auto 16px;color:${t.color}">
+          <span style="font-size:42px">${t.em}</span>
         </div>
-        <h2 style="font-family:'Syne';font-size:22px;font-weight:700;margin-bottom:6px">Verified</h2>
-        <p class="muted tiny" style="line-height:1.5">Your ID was verified at signup. You're cleared to order hemp & THCA products.</p>
+        <h2 style="font-family:'Syne';font-size:22px;font-weight:700;margin-bottom:6px">${t.title}</h2>
+        <p class="muted tiny" style="line-height:1.5;max-width:300px;margin:0 auto">${t.sub}</p>
       </div>
-      <div class="prof-row" style="border-color:var(--neon)">
-        <div class="ic">🪪</div>
+
+      <div class="prof-row" style="border-color:${t.color}">
+        <div class="ic" style="color:${t.color}">${t.em}</div>
         <div style="flex:1">
-          <div style="font-weight:600;font-size:13px">Driver's License · ${state.user?.name||''}</div>
-          <div class="muted tiny" style="margin-top:2px">Verified · 21+ confirmed</div>
-        </div>
-        <div class="badge neon">Active</div>
-      </div>
-      <div class="prof-row">
-        <div class="ic">📅</div>
-        <div style="flex:1">
-          <div style="font-weight:600;font-size:13px">Verified since</div>
-          <div class="muted tiny" style="margin-top:2px">${state.user?.created_at ? new Date(state.user.created_at).toLocaleDateString() : '—'}</div>
+          <div style="font-weight:600;font-size:13px">Status</div>
+          <div class="muted tiny" style="margin-top:2px;text-transform:capitalize">${status}</div>
         </div>
       </div>
-      <div class="prof-row" onclick="toast('Driver re-checks ID','Your driver will scan again at every delivery')" style="cursor:pointer">
-        <div class="ic">🚚</div>
-        <div style="flex:1">
-          <div style="font-weight:600;font-size:13px">Delivery ID check</div>
-          <div class="muted tiny" style="margin-top:2px">Driver scans your ID at the door</div>
-        </div>
-      </div>
-      <div class="prof-row" onclick="toast('Re-verification','Coming soon \u2014 contact support to update your ID')" style="cursor:pointer;margin-top:14px">
-        <div class="ic">🔄</div>
-        <div class="lbl">Re-verify ID</div>
-        <div style="color:var(--text-mute);font-size:18px">›</div>
-      </div>
+      ${state.user?.verification_submitted_at ? `
+        <div class="prof-row">
+          <div class="ic">📅</div>
+          <div style="flex:1">
+            <div style="font-weight:600;font-size:13px">Submitted</div>
+            <div class="muted tiny" style="margin-top:2px">${new Date(state.user.verification_submitted_at).toLocaleString()}</div>
+          </div>
+        </div>` : ''}
+      ${state.user?.verification_reviewed_at ? `
+        <div class="prof-row">
+          <div class="ic">👁</div>
+          <div style="flex:1">
+            <div style="font-weight:600;font-size:13px">Reviewed</div>
+            <div class="muted tiny" style="margin-top:2px">${new Date(state.user.verification_reviewed_at).toLocaleString()}</div>
+          </div>
+        </div>` : ''}
+
+      ${canSubmit ? `
+        <button class="btn btn-primary" style="margin-top:18px" onclick="startVerification()">${status==='rejected'?'Re-submit ID':'Verify my ID now'}</button>
+      ` : ''}
+
       <div style="background:rgba(212,175,55,.06);border:1px solid rgba(212,175,55,.3);border-radius:14px;padding:14px;margin-top:18px">
-        <div style="font-size:11px;color:var(--gold);font-weight:700;text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">🔒 Privacy & compliance</div>
-        <div style="font-size:13px;color:var(--text-dim);line-height:1.5">ID images are processed via secure third-party verification (Persona/Veriff in production). We don't store ID photos on our servers.</div>
+        <div style="font-size:11px;color:var(--gold);font-weight:700;text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">🔒 Privacy</div>
+        <div style="font-size:13px;color:var(--text-dim);line-height:1.5">Your ID photos are stored securely and only viewed by our verification team. In production this routes through Persona/Veriff for automated, encrypted checks. Driver also re-checks your ID at delivery.</div>
       </div>
     </div>
   </div>`;
+};
+
+window.startVerification = () => {
+  verifPhotos.front = null; verifPhotos.back = null; verifPhotos.selfie = null;
+  state.verifStep = 'front';
+  nav('idcapture');
+};
+
+screens.idcapture = () => {
+  const step = state.verifStep || 'front';
+  const stepInfo = {
+    front:  { title: 'Front of your ID',  sub: 'Driver\'s license, state ID, or passport. Make sure all text is clear and readable.', em: '🪪', facing: 'environment' },
+    back:   { title: 'Back of your ID',   sub: 'Same ID — flip it over and capture the back.', em: '🪪', facing: 'environment' },
+    selfie: { title: 'Selfie holding ID', sub: 'Hold your ID next to your face. Helps us match it to you.', em: '🤳', facing: 'user' },
+  }[step];
+  const order = ['front', 'back', 'selfie'];
+  const stepNum = order.indexOf(step) + 1;
+  const captured = !!verifPhotos[step];
+  return `
+  <div class="screen">
+    <div class="simple-header">
+      <div class="b" onclick="if(confirm('Cancel ID verification?'))nav('idverify')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></div>
+      <div class="t">Step ${stepNum} of 3</div>
+    </div>
+    <div class="scroll" style="padding:14px 22px 40px">
+      <div style="display:flex;gap:6px;margin-bottom:18px">
+        ${order.map((s, i) => `<div style="flex:1;height:4px;border-radius:99px;background:${i < stepNum ? 'var(--neon)' : 'var(--surface-3)'}"></div>`).join('')}
+      </div>
+
+      <h2 style="font-family:'Syne';font-size:22px;font-weight:700;margin-bottom:6px">${stepInfo.title}</h2>
+      <p class="muted tiny" style="line-height:1.5;margin-bottom:18px">${stepInfo.sub}</p>
+
+      ${captured ? `
+        <div style="background:var(--surface-2);border:1px solid var(--neon);border-radius:16px;padding:10px;text-align:center">
+          <img src="${verifPhotos[step]}" style="max-width:100%;max-height:280px;border-radius:10px;display:block;margin:0 auto" alt="" />
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <button class="btn btn-ghost" onclick="retakeVerifPhoto()">📷 Retake</button>
+            <button class="btn btn-primary" onclick="nextVerifStep()">${step === 'selfie' ? 'Submit ID' : 'Next →'}</button>
+          </div>
+        </div>
+      ` : `
+        <input id="verif-cam" type="file" accept="image/*" capture="${stepInfo.facing}" onchange="handleVerifPhoto(event)" style="display:none" />
+        <button type="button" class="btn btn-primary" style="height:auto;padding:30px;flex-direction:column;gap:10px" onclick="document.getElementById('verif-cam').click()">
+          <span style="font-size:48px">${stepInfo.em}</span>
+          <span style="font-size:15px;font-weight:700">Open camera</span>
+          <span style="font-size:11px;color:#0a0a0b;opacity:.7;font-weight:500">Or pick from photo library</span>
+        </button>
+
+        ${step === 'selfie' ? `
+          <button class="btn btn-ghost" style="margin-top:10px" onclick="skipSelfie()">Skip selfie (optional)</button>
+        ` : ''}
+      `}
+
+      <div style="background:var(--surface-2);border:1px solid var(--line);border-radius:14px;padding:14px;margin-top:18px">
+        <div style="font-size:11px;color:var(--text-dim);font-weight:700;text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">📸 Photo tips</div>
+        <ul style="font-size:12px;color:var(--text-dim);line-height:1.7;padding-left:16px;margin:0">
+          <li>Make sure the photo is well-lit and in focus</li>
+          <li>All four corners of the ID visible</li>
+          <li>No glare on the photo or hologram</li>
+          <li>Photos are auto-resized — they won't take long to upload</li>
+        </ul>
+      </div>
+    </div>
+  </div>`;
+};
+
+window.handleVerifPhoto = (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  if (!file.type.startsWith('image/')) { alert('Please choose an image file.'); return; }
+  if (file.size > 15 * 1024 * 1024) { alert('Image too large. Please choose one under 15MB.'); return; }
+  const reader = new FileReader();
+  reader.onload = (e) => resizeImage(e.target.result, 1400, 0.85, (resized) => {
+    verifPhotos[state.verifStep] = resized;
+    render();
+  });
+  reader.readAsDataURL(file);
+};
+
+function resizeImage(dataUrl, maxWidth, quality, callback) {
+  const img = new Image();
+  img.onload = () => {
+    const ratio = img.width > maxWidth ? maxWidth / img.width : 1;
+    const w = Math.round(img.width * ratio);
+    const h = Math.round(img.height * ratio);
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, w, h);
+    callback(canvas.toDataURL('image/jpeg', quality));
+  };
+  img.src = dataUrl;
+}
+
+window.retakeVerifPhoto = () => {
+  verifPhotos[state.verifStep] = null;
+  render();
+};
+
+window.skipSelfie = () => {
+  verifPhotos.selfie = null;
+  submitVerification();
+};
+
+window.nextVerifStep = async () => {
+  if (state.verifStep === 'front') { state.verifStep = 'back'; render(); }
+  else if (state.verifStep === 'back') { state.verifStep = 'selfie'; render(); }
+  else if (state.verifStep === 'selfie') { await submitVerification(); }
+};
+
+async function submitVerification() {
+  if (!verifPhotos.front || !verifPhotos.back) { toast('Missing photos','Please capture both sides of your ID'); return; }
+  toast('Submitting…', 'Uploading your photos');
+  try {
+    await api('/me/verification', { method: 'POST', body: {
+      id_front_url: verifPhotos.front,
+      id_back_url: verifPhotos.back,
+      selfie_url: verifPhotos.selfie,
+    }});
+    // refresh user to get new status
+    try { const { user } = await api('/me'); state.user = user; } catch {}
+    verifPhotos.front = null; verifPhotos.back = null; verifPhotos.selfie = null;
+    nav('idverify');
+    toast('Submitted ✓', 'Your ID is being reviewed');
+  } catch (e) {
+    toast('Submission failed', e.message);
+  }
+}
 
 // ===== Notification settings =====
 function getNotifPref(key, def = true) {

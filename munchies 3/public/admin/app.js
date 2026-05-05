@@ -2,7 +2,7 @@
 const API = '/api';
 const ROOT = document.getElementById('root');
 
-const state = { user: null, view: 'overview', error: null };
+const state = { user: null, view: 'overview', error: null, categories: [] };
 
 async function api(path, opts={}) {
   const r = await fetch(API+path, { method:opts.method||'GET', headers:{'Content-Type':'application/json'}, credentials:'include', body:opts.body?JSON.stringify(opts.body):undefined });
@@ -17,6 +17,8 @@ async function init() {
     const { user } = await api('/me');
     if (user.role !== 'admin') { state.error='Admin access required'; renderLogin(); return; }
     state.user = user;
+    // preload categories for product form
+    try { const c = await api('/categories'); state.categories = c.categories; } catch {}
     renderApp();
   } catch { renderLogin(); }
 }
@@ -41,6 +43,7 @@ window.adminLogin = async () => {
     const r = await api('/auth/login', { method:'POST', body:{ email:document.getElementById('li-email').value, password:document.getElementById('li-pw').value }});
     if (r.user.role !== 'admin') throw new Error('Admin access required');
     state.user = r.user;
+    try { const c = await api('/categories'); state.categories = c.categories; } catch {}
     renderApp();
   } catch (e) { state.error = e.message; renderLogin(); }
 };
@@ -60,6 +63,7 @@ function renderApp() {
       <div class="nav-section">Operations</div>
       ${navItem('overview','📊','Overview')}
       ${navItem('orders','📦','Orders')}
+      ${navItem('verifications','🪪','Verifications')}
       ${navItem('drivers','🚚','Drivers')}
       <div class="nav-section">Catalog</div>
       ${navItem('products','🌿','Products')}
@@ -76,7 +80,8 @@ function renderApp() {
     <main class="main">
       <div id="view"><div class="spinner"></div></div>
     </main>
-  </div>`;
+  </div>
+  <div id="modal-host"></div>`;
   loadView();
 }
 
@@ -90,6 +95,7 @@ async function loadView() {
   try {
     if (state.view==='overview') return renderOverview(v);
     if (state.view==='orders') return renderOrders(v);
+    if (state.view==='verifications') return renderVerifications(v);
     if (state.view==='drivers') return renderDrivers(v);
     if (state.view==='products') return renderProducts(v);
     if (state.view==='inventory') return renderInventory(v);
@@ -97,6 +103,105 @@ async function loadView() {
     if (state.view==='promos') return renderPromos(v);
   } catch (e) { v.innerHTML=`<div class="content"><p class="empty">Error: ${e.message}</p></div>`; }
 }
+
+// ===== Verifications panel =====
+async function renderVerifications(v) {
+  const status = state.verifFilter || 'pending';
+  const { verifications } = await api('/admin/verifications?status=' + status);
+  v.innerHTML = `
+    <div class="topbar"><div><h1>ID Verifications</h1><div class="sub">Review and approve customer ID submissions</div></div>
+      <select onchange="state.verifFilter=this.value;loadView()" style="background:var(--surface-3);border:1px solid var(--line);color:var(--text);padding:8px 12px;border-radius:8px;font-family:inherit;font-size:13px">
+        <option value="pending" ${status==='pending'?'selected':''}>Pending review</option>
+        <option value="approved" ${status==='approved'?'selected':''}>Approved</option>
+        <option value="rejected" ${status==='rejected'?'selected':''}>Rejected</option>
+        <option value="unverified" ${status==='unverified'?'selected':''}>Not yet submitted</option>
+      </select>
+    </div>
+    <div class="content">
+      <div class="panel">
+        ${verifications.length ? `<table>
+          <thead><tr><th>Customer</th><th>Email</th><th>Phone</th><th>Status</th><th>Submitted</th><th>Reviewed</th><th></th></tr></thead>
+          <tbody>
+            ${verifications.map(v=>`<tr>
+              <td><b>${v.name}</b></td>
+              <td>${v.email}</td>
+              <td>${v.phone||'—'}</td>
+              <td><span class="status s-${v.verification_status==='approved'?'delivered':v.verification_status==='rejected'?'cancelled':v.verification_status==='pending'?'placed':'packed'}">${v.verification_status}</span></td>
+              <td>${v.verification_submitted_at ? new Date(v.verification_submitted_at).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'}</td>
+              <td>${v.verification_reviewed_at ? new Date(v.verification_reviewed_at).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'}</td>
+              <td><button class="btn btn-primary btn-sm" onclick="openVerification(${v.id})">Review →</button></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>` : `<p class="empty">No ${status} verifications.</p>`}
+      </div>
+    </div>`;
+}
+
+window.openVerification = async (userId) => {
+  const host = document.getElementById('modal-host');
+  host.innerHTML = '<div class="modal-overlay"><div class="modal" style="max-height:92vh"><div class="modal-body" style="padding:60px;text-align:center"><div class="spinner"></div></div></div></div>';
+  try {
+    const { verification: u } = await api('/admin/verifications/' + userId);
+    const photoBlock = (label, src) => src
+      ? `<div style="background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px"><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-bottom:6px">${label}</div><img src="${src}" style="width:100%;max-height:200px;border-radius:6px;object-fit:contain;cursor:zoom-in" onclick="window.open(this.src,'_blank')" /></div>`
+      : `<div style="background:var(--surface-2);border:1px dashed var(--line);border-radius:10px;padding:30px;text-align:center;color:var(--text-mute);font-size:12px">${label}<br><i>(not provided)</i></div>`;
+    host.innerHTML = `
+      <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+        <div class="modal">
+          <div class="modal-head">
+            <h2>Review: ${u.name}</h2>
+            <button class="modal-close" onclick="closeModal()">×</button>
+          </div>
+          <div class="modal-body">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+              <div><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600">Email</div><div style="font-size:14px;font-weight:600">${u.email}</div></div>
+              <div><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600">Phone</div><div style="font-size:14px;font-weight:600">${u.phone||'—'}</div></div>
+              <div><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600">Account created</div><div style="font-size:14px;font-weight:600">${new Date(u.created_at).toLocaleDateString()}</div></div>
+              <div><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600">Submitted</div><div style="font-size:14px;font-weight:600">${u.verification_submitted_at ? new Date(u.verification_submitted_at).toLocaleString() : '—'}</div></div>
+            </div>
+            <div style="background:rgba(255,181,71,.06);border:1px solid rgba(255,181,71,.3);border-radius:10px;padding:12px;margin-bottom:18px;font-size:12px;color:var(--text-dim);line-height:1.5">
+              <b style="color:var(--warn,#ffb547)">Verify:</b> ID is real (not a photo of a printout), DOB shows 21+, name matches account name, photo on ID matches selfie face.
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:18px">
+              ${photoBlock('Front of ID', u.id_front_url)}
+              ${photoBlock('Back of ID', u.id_back_url)}
+              ${photoBlock('Selfie', u.selfie_url)}
+            </div>
+            ${u.verification_notes ? `<div style="background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:14px"><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-bottom:4px">Notes</div><div style="font-size:13px">${u.verification_notes}</div></div>` : ''}
+            <div class="field full" style="margin-top:14px">
+              <label style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.6px;font-weight:600">Reviewer notes (required if rejecting)</label>
+              <textarea id="verif-notes" rows="2" placeholder="e.g. Photo too blurry, ID expired, DOB shows under 21..." style="width:100%;background:var(--surface-2);border:1px solid var(--line);color:var(--text);font-family:inherit;font-size:13px;border-radius:8px;padding:10px 12px;outline:none;resize:vertical;margin-top:6px"></textarea>
+            </div>
+          </div>
+          <div class="modal-foot">
+            <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+            <button class="btn" style="background:var(--danger);color:#fff;width:auto;padding:10px 20px" onclick="rejectVerif(${u.id})">✗ Reject</button>
+            <button class="btn btn-primary" style="width:auto;padding:10px 20px" onclick="approveVerif(${u.id})">✓ Approve</button>
+          </div>
+        </div>
+      </div>`;
+  } catch (e) { closeModal(); alert('Failed to load verification: ' + e.message); }
+};
+
+window.approveVerif = async (userId) => {
+  const notes = document.getElementById('verif-notes')?.value?.trim() || null;
+  try {
+    await api('/admin/verifications/' + userId + '/approve', { method:'POST', body: { notes }});
+    closeModal();
+    loadView();
+  } catch (e) { alert('Failed: ' + e.message); }
+};
+
+window.rejectVerif = async (userId) => {
+  const notes = document.getElementById('verif-notes')?.value?.trim();
+  if (!notes) { alert('Please add a reason for rejection in the notes field — the customer will see this.'); return; }
+  if (!confirm('Reject this verification? The customer will be asked to re-submit.')) return;
+  try {
+    await api('/admin/verifications/' + userId + '/reject', { method:'POST', body: { notes }});
+    closeModal();
+    loadView();
+  } catch (e) { alert('Failed: ' + e.message); }
+};
 
 async function renderOverview(v) {
   const d = await api('/admin/overview');
@@ -162,11 +267,12 @@ async function renderOrders(v) {
     <div class="content">
       <div class="panel">
         ${orders.length?`<table>
-          <thead><tr><th>Order</th><th>Customer</th><th>Type</th><th>Status</th><th>Driver</th><th>Total</th><th>Placed</th><th></th></tr></thead>
+          <thead><tr><th>Order</th><th>Customer</th><th>Address</th><th>Type</th><th>Status</th><th>Driver</th><th>Total</th><th>Placed</th><th></th></tr></thead>
           <tbody id="orders-tbody">
             ${orders.map(o=>`<tr>
               <td><b>#${o.order_no}</b></td>
               <td>${o.customer_name}<div style="font-size:11px;color:var(--text-mute)">${o.customer_phone||''}</div></td>
+              <td style="max-width:200px;font-size:11px;color:var(--text-dim)">${o.address||'—'}</td>
               <td>${o.fulfillment==='delivery'?'🚚':'🏪'} ${o.fulfillment}</td>
               <td><span class="status s-${o.status}">${o.status.replace(/_/g,' ')}</span></td>
               <td>${o.driver_name||'<span style="color:var(--text-mute)">unassigned</span>'}</td>
@@ -195,10 +301,11 @@ window.filterOrders = async (status) => {
   const [{drivers}] = [await api('/admin/drivers')];
   document.getElementById('orders-tbody').innerHTML = orders.length?orders.map(o=>`<tr>
     <td><b>#${o.order_no}</b></td><td>${o.customer_name}</td>
+    <td style="font-size:11px;color:var(--text-dim)">${o.address||'—'}</td>
     <td>${o.fulfillment==='delivery'?'🚚':'🏪'} ${o.fulfillment}</td>
     <td><span class="status s-${o.status}">${o.status.replace(/_/g,' ')}</span></td>
     <td>${o.driver_name||'unassigned'}</td><td><b>${$$(o.total_cents)}</b></td><td>${fmtDate(o.created_at)}</td><td></td>
-  </tr>`).join(''):'<tr><td colspan="8"><p class="empty">No orders.</p></td></tr>';
+  </tr>`).join(''):'<tr><td colspan="9"><p class="empty">No orders.</p></td></tr>';
 };
 window.updateOrder = async (id, body) => {
   await api('/admin/orders/'+id, { method:'PATCH', body });
@@ -212,9 +319,6 @@ async function renderDrivers(v) {
     <div class="content">
       <div class="cards">
         ${drivers.map(d=>`<div class="card"><div class="lbl">Driver</div><div class="val" style="font-size:18px">${d.name}</div><div class="delta" style="color:var(--text-mute)">${d.email}</div><div style="margin-top:10px"><span class="status s-out_for_delivery">● Available</span></div></div>`).join('')}
-        <div class="card" style="border-style:dashed;display:grid;place-items:center;cursor:pointer" onclick="alert('Go to /driver to test driver login. Add new drivers via SQL or extend the API with POST /api/admin/drivers')">
-          <div style="text-align:center"><div style="font-size:32px;margin-bottom:8px">+</div><div style="font-size:13px;color:var(--text-dim)">Add driver</div></div>
-        </div>
       </div>
       <div class="panel">
         <div class="panel-title">Driver login info</div>
@@ -227,31 +331,266 @@ async function renderProducts(v) {
   const {products} = await api('/admin/products');
   v.innerHTML = `
     <div class="topbar"><div><h1>Products</h1><div class="sub">${products.length} products in catalog</div></div>
-      <button class="btn btn-primary" onclick="alert('Add product UI: extend with a modal form posting to POST /api/admin/products')">+ Add product</button>
+      <button class="btn btn-primary" onclick="openAddProduct()">+ Add product</button>
     </div>
     <div class="content">
       <div class="panel">
         <table>
           <thead><tr><th></th><th>Product</th><th>Category</th><th>Type</th><th>THC/CBD</th><th>Variants</th><th>Total stock</th><th></th></tr></thead>
           <tbody>
-            ${products.map(p=>{
+            ${products.length?products.map(p=>{
               const totalStock = p.variants.reduce((s,v)=>s+v.stock,0);
               return `<tr>
-                <td style="font-size:32px">${p.emoji}</td>
+                <td>${p.image_url ? `<img class="product-thumb" src="${p.image_url}" alt=""/>` : `<span style="font-size:32px">${p.emoji}</span>`}</td>
                 <td><b>${p.name}</b><div style="font-size:11px;color:var(--text-mute)">${p.sub||''}</div></td>
                 <td><span class="tag">${p.category_name}</span></td>
                 <td>${p.type}</td>
                 <td>${p.thc||'—'} / ${p.cbd||'—'}</td>
                 <td>${p.variants.map(va=>`<span class="tag" style="margin-right:4px">${va.size} · ${$$(va.price_cents)}</span>`).join('')}</td>
                 <td><span class="${totalStock<10?'stock-low':'stock-ok'}"><b>${totalStock}</b></span></td>
-                <td><button class="btn btn-ghost btn-sm" onclick="navTo('inventory')">Manage</button></td>
+                <td>
+                  <div class="row-actions">
+                    <button class="btn btn-ghost btn-sm" onclick="navTo('inventory')">Stock</button>
+                    <button class="btn btn-ghost btn-sm" style="color:var(--danger);border-color:rgba(255,91,110,.3)" onclick="deleteProduct(${p.id},'${p.name.replace(/'/g,"\\'")}')">Delete</button>
+                  </div>
+                </td>
               </tr>`;
-            }).join('')}
+            }).join(''):'<tr><td colspan="8"><p class="empty">No products yet. Click <b>+ Add product</b> to add your first one.</p></td></tr>'}
           </tbody>
         </table>
       </div>
     </div>`;
 }
+
+window.openAddProduct = () => {
+  const cats = state.categories;
+  const host = document.getElementById('modal-host');
+  host.innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal">
+        <div class="modal-head">
+          <h2>Add new product</h2>
+          <button class="modal-close" onclick="closeModal()">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-grid">
+            <div class="field full">
+              <label>Product name *</label>
+              <input id="np-name" placeholder="e.g. Gelato 41" />
+            </div>
+            <div class="field full">
+              <label>Subtitle</label>
+              <input id="np-sub" placeholder="e.g. THCA Flower • Hybrid" />
+            </div>
+            <div class="field">
+              <label>Category *</label>
+              <select id="np-cat">
+                ${cats.map(c=>`<option value="${c.id}">${c.emoji} ${c.name}</option>`).join('')}
+              </select>
+            </div>
+            <div class="field">
+              <label>Strain type</label>
+              <select id="np-type">
+                <option value="Hybrid">Hybrid</option>
+                <option value="Indica">Indica</option>
+                <option value="Sativa">Sativa</option>
+                <option value="CBD">CBD</option>
+                <option value="CBN">CBN</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>THC content</label>
+              <input id="np-thc" placeholder="e.g. 28.4% or 25mg" />
+            </div>
+            <div class="field">
+              <label>CBD content</label>
+              <input id="np-cbd" placeholder="e.g. <1% or 1000mg" />
+            </div>
+            <div class="field">
+              <label>Emoji</label>
+              <input id="np-emoji" placeholder="🌿" maxlength="4" value="🌿" />
+            </div>
+            <div class="field">
+              <label>Tag (optional)</label>
+              <input id="np-tag" placeholder="New / Hot / Bestseller" />
+            </div>
+            <div class="field full">
+              <label>Description</label>
+              <textarea id="np-desc" rows="3" placeholder="Brief product description shown on the product page..."></textarea>
+            </div>
+          </div>
+
+          <div class="image-section">
+            <div class="variants-head">
+              <h3>Product photo</h3>
+              <span style="font-size:11px;color:var(--text-mute)">Optional — falls back to emoji if blank</span>
+            </div>
+            <div class="image-tabs">
+              <button class="image-tab active" id="img-tab-upload" onclick="switchImageTab('upload')">📁 Upload from device</button>
+              <button class="image-tab" id="img-tab-url" onclick="switchImageTab('url')">🔗 Paste image URL</button>
+            </div>
+            <div id="img-upload-pane">
+              <input id="np-image-file" type="file" accept="image/*" onchange="handleImageUpload(event)" style="display:none" />
+              <button type="button" class="img-upload-btn" onclick="document.getElementById('np-image-file').click()">
+                <span style="font-size:32px">📷</span>
+                <span style="font-size:13px;font-weight:600">Choose photo from your device</span>
+                <span style="font-size:11px;color:var(--text-mute)">Auto-resized to max 1200px • JPEG • Under 200KB</span>
+              </button>
+            </div>
+            <div id="img-url-pane" style="display:none">
+              <input id="np-image-url" type="url" placeholder="https://example.com/photo.jpg" oninput="previewUrlImage()" />
+              <p class="img-help">Paste a direct link to an image (Imgur, your website, ImgBB, etc.)</p>
+            </div>
+            <input type="hidden" id="np-image-data" />
+            <div id="img-preview" style="display:none">
+              <img id="img-preview-img" />
+              <button type="button" class="img-remove" onclick="clearImage()">× Remove image</button>
+            </div>
+          </div>
+
+          <div class="variants-section">
+            <div class="variants-head">
+              <h3>Sizes & pricing</h3>
+              <button class="btn btn-ghost btn-sm" onclick="addVariantRow()">+ Add size</button>
+            </div>
+            <div id="variants-list">
+              <div class="variant-row">
+                <input class="v-size" placeholder="Size (e.g. 3.5g)" />
+                <input class="v-price" type="number" step="0.01" placeholder="Price ($)" />
+                <input class="v-stock" type="number" placeholder="Stock" value="50" />
+                <button class="v-remove" onclick="this.parentElement.remove()">×</button>
+              </div>
+            </div>
+          </div>
+
+          ${state.formError?`<div class="error">${state.formError}</div>`:''}
+        </div>
+        <div class="modal-foot">
+          <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+          <button class="btn btn-primary" onclick="saveProduct()">Save product</button>
+        </div>
+      </div>
+    </div>`;
+};
+
+window.addVariantRow = () => {
+  const list = document.getElementById('variants-list');
+  const row = document.createElement('div');
+  row.className = 'variant-row';
+  row.innerHTML = `
+    <input class="v-size" placeholder="Size (e.g. 7g)" />
+    <input class="v-price" type="number" step="0.01" placeholder="Price ($)" />
+    <input class="v-stock" type="number" placeholder="Stock" value="50" />
+    <button class="v-remove" onclick="this.parentElement.remove()">×</button>`;
+  list.appendChild(row);
+};
+
+// ===== Image upload (with client-side resize so we don't upload huge files) =====
+window.switchImageTab = (tab) => {
+  document.getElementById('img-tab-upload').classList.toggle('active', tab === 'upload');
+  document.getElementById('img-tab-url').classList.toggle('active', tab === 'url');
+  document.getElementById('img-upload-pane').style.display = tab === 'upload' ? 'block' : 'none';
+  document.getElementById('img-url-pane').style.display = tab === 'url' ? 'block' : 'none';
+};
+
+window.handleImageUpload = (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  if (!file.type.startsWith('image/')) { alert('Please choose an image file (jpg, png, webp).'); return; }
+  if (file.size > 10 * 1024 * 1024) { alert('Image too large. Please choose one under 10MB.'); return; }
+  const reader = new FileReader();
+  reader.onload = (e) => resizeImage(e.target.result, 1200, 0.85, (resized) => {
+    document.getElementById('np-image-data').value = resized;
+    showPreview(resized);
+  });
+  reader.readAsDataURL(file);
+};
+
+function resizeImage(dataUrl, maxWidth, quality, callback) {
+  const img = new Image();
+  img.onload = () => {
+    const ratio = img.width > maxWidth ? maxWidth / img.width : 1;
+    const w = Math.round(img.width * ratio);
+    const h = Math.round(img.height * ratio);
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, w, h);
+    callback(canvas.toDataURL('image/jpeg', quality));
+  };
+  img.src = dataUrl;
+}
+
+window.previewUrlImage = () => {
+  const url = document.getElementById('np-image-url').value.trim();
+  if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+    document.getElementById('np-image-data').value = url;
+    showPreview(url);
+  } else if (!url) {
+    clearImage();
+  }
+};
+
+function showPreview(src) {
+  const preview = document.getElementById('img-preview');
+  const img = document.getElementById('img-preview-img');
+  img.src = src;
+  preview.style.display = 'block';
+}
+
+window.clearImage = () => {
+  document.getElementById('np-image-data').value = '';
+  const fileInput = document.getElementById('np-image-file');
+  if (fileInput) fileInput.value = '';
+  const urlInput = document.getElementById('np-image-url');
+  if (urlInput) urlInput.value = '';
+  document.getElementById('img-preview').style.display = 'none';
+};
+
+window.saveProduct = async () => {
+  state.formError = null;
+  const name = document.getElementById('np-name').value.trim();
+  if (!name) { state.formError = 'Product name is required'; renderApp(); openAddProduct(); return; }
+  const variants = [];
+  document.querySelectorAll('.variant-row').forEach(r => {
+    const size = r.querySelector('.v-size').value.trim();
+    const price = parseFloat(r.querySelector('.v-price').value);
+    const stock = parseInt(r.querySelector('.v-stock').value, 10);
+    if (size && price > 0) variants.push({ size, price_cents: Math.round(price*100), stock: stock || 0 });
+  });
+  if (variants.length === 0) { alert('Add at least one size with a price.'); return; }
+  const body = {
+    name,
+    sub: document.getElementById('np-sub').value.trim(),
+    emoji: document.getElementById('np-emoji').value.trim() || '🌿',
+    image_url: document.getElementById('np-image-data').value || null,
+    category_id: document.getElementById('np-cat').value,
+    type: document.getElementById('np-type').value,
+    thc: document.getElementById('np-thc').value.trim(),
+    cbd: document.getElementById('np-cbd').value.trim(),
+    description: document.getElementById('np-desc').value.trim(),
+    tag: document.getElementById('np-tag').value.trim(),
+    variants
+  };
+  try {
+    const saveBtn = document.querySelector('.modal-foot .btn-primary');
+    if (saveBtn) { saveBtn.textContent = 'Saving…'; saveBtn.disabled = true; }
+    await api('/admin/products', { method:'POST', body });
+    closeModal();
+    loadView();
+  } catch (e) { alert('Failed to save: ' + e.message); }
+};
+
+window.deleteProduct = async (id, name) => {
+  if (!confirm(`Delete "${name}"? This will hide it from the customer app. Existing orders are preserved.`)) return;
+  try {
+    await api('/admin/products/' + id, { method:'DELETE' });
+    loadView();
+  } catch (e) { alert('Failed to delete: ' + e.message); }
+};
+
+window.closeModal = () => { document.getElementById('modal-host').innerHTML = ''; };
 
 async function renderInventory(v) {
   const {products} = await api('/admin/products');
@@ -262,13 +601,13 @@ async function renderInventory(v) {
         <table>
           <thead><tr><th>Product</th><th>Size</th><th>Price</th><th>Stock</th><th></th></tr></thead>
           <tbody>
-            ${products.flatMap(p=>p.variants.map(v=>`<tr data-vid="${v.id}">
+            ${products.length?products.flatMap(p=>p.variants.map(v=>`<tr data-vid="${v.id}">
               <td><span style="font-size:22px;margin-right:8px">${p.emoji}</span><b>${p.name}</b></td>
               <td>${v.size}</td>
               <td><input type="number" step="0.01" value="${(v.price_cents/100).toFixed(2)}" onchange="updateVariant(${v.id},{price_cents:Math.round(this.value*100)})" style="width:90px"/></td>
               <td><input type="number" value="${v.stock}" onchange="updateVariant(${v.id},{stock:+this.value})" style="width:80px"/> ${v.stock<10?'<span class="status s-cancelled" style="margin-left:8px">LOW</span>':''}</td>
-              <td><button class="btn btn-ghost btn-sm" onclick="updateVariant(${v.id},{stock:${v.stock}+50})">+50 stock</button></td>
-            </tr>`)).join('')}
+              <td><button class="btn btn-ghost btn-sm" onclick="bumpStock(${v.id},${v.stock})">+50 stock</button></td>
+            </tr>`)).join(''):'<tr><td colspan="5"><p class="empty">No products yet. Add your first product in the Products tab.</p></td></tr>'}
           </tbody>
         </table>
       </div>
@@ -276,8 +615,10 @@ async function renderInventory(v) {
 }
 window.updateVariant = async (id, body) => {
   await api('/admin/variants/'+id, { method:'PATCH', body });
-  // re-render inventory to reflect changes
-  if (state.view==='inventory') loadView();
+};
+window.bumpStock = async (id, current) => {
+  await api('/admin/variants/'+id, { method:'PATCH', body:{stock: current+50} });
+  loadView();
 };
 
 async function renderCustomers(v) {
@@ -317,5 +658,51 @@ async function renderPromos(v) {
       </div>
     </div>`;
 }
+
+// inject modal styles once
+(function injectModalCSS(){
+  const s = document.createElement('style');
+  s.textContent = `
+    .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(8px);display:grid;place-items:center;z-index:1000;animation:fadeIn .2s ease}
+    @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+    .modal{background:var(--surface);border:1px solid var(--line);border-radius:20px;width:min(640px,92vw);max-height:88vh;display:flex;flex-direction:column;box-shadow:0 30px 80px rgba(0,0,0,.6)}
+    .modal-head{padding:22px 24px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between}
+    .modal-head h2{font-size:20px}
+    .modal-close{background:var(--surface-3);border:1px solid var(--line);color:var(--text);width:32px;height:32px;border-radius:8px;font-size:20px;cursor:pointer;line-height:1}
+    .modal-body{padding:18px 24px;overflow-y:auto;flex:1}
+    .modal-foot{padding:16px 24px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:10px}
+    .modal-foot .btn{width:auto;padding:10px 20px}
+    .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px}
+    .form-grid .field{display:flex;flex-direction:column;gap:6px}
+    .form-grid .field.full{grid-column:1/-1}
+    .form-grid label{font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.6px;font-weight:600}
+    .form-grid input,.form-grid select,.form-grid textarea{background:var(--surface-2);border:1px solid var(--line);color:var(--text);font-family:inherit;font-size:13px;border-radius:8px;padding:10px 12px;outline:none;width:100%}
+    .form-grid textarea{resize:vertical;font-family:inherit}
+    .form-grid input:focus,.form-grid select:focus,.form-grid textarea:focus{border-color:var(--neon)}
+    .variants-section{margin-top:8px;padding-top:18px;border-top:1px solid var(--line)}
+    .variants-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+    .variants-head h3{font-size:13px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-dim);font-weight:600}
+    .variants-head .btn{width:auto;padding:6px 12px;font-size:12px}
+    .variant-row{display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:8px;margin-bottom:8px;align-items:center}
+    .variant-row input{background:var(--surface-2);border:1px solid var(--line);color:var(--text);font-family:inherit;font-size:13px;border-radius:8px;padding:10px 12px;outline:none}
+    .v-remove{background:var(--surface-3);border:1px solid var(--line);color:var(--danger);width:36px;height:36px;border-radius:8px;font-size:18px;cursor:pointer;line-height:1}
+    .v-remove:hover{background:rgba(255,91,110,.1);border-color:var(--danger)}
+    .image-section{margin-top:8px;padding-top:18px;border-top:1px solid var(--line)}
+    .image-tabs{display:flex;gap:6px;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:4px;margin-bottom:12px}
+    .image-tab{flex:1;background:none;border:none;color:var(--text-dim);font-family:inherit;font-size:12px;font-weight:600;padding:10px;border-radius:7px;cursor:pointer;transition:all .15s}
+    .image-tab.active{background:var(--surface-3);color:var(--neon)}
+    .img-upload-btn{width:100%;background:var(--surface-2);border:2px dashed var(--line);border-radius:12px;padding:24px 16px;display:flex;flex-direction:column;align-items:center;gap:8px;cursor:pointer;color:var(--text);transition:border-color .15s}
+    .img-upload-btn:hover{border-color:var(--neon);background:rgba(198,255,61,.04)}
+    #img-url-pane input{width:100%;background:var(--surface-2);border:1px solid var(--line);color:var(--text);font-family:inherit;font-size:13px;border-radius:8px;padding:12px;outline:none}
+    #img-url-pane input:focus{border-color:var(--neon)}
+    .img-help{font-size:11px;color:var(--text-mute);margin-top:6px;line-height:1.4}
+    #img-preview{margin-top:14px;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;align-items:center;gap:10px}
+    #img-preview img{max-width:100%;max-height:200px;border-radius:8px;object-fit:contain}
+    .img-remove{background:var(--surface-3);border:1px solid var(--line);color:var(--danger);font-family:inherit;font-size:12px;font-weight:600;padding:6px 12px;border-radius:8px;cursor:pointer}
+    .img-remove:hover{background:rgba(255,91,110,.1);border-color:var(--danger)}
+    .product-thumb{width:48px;height:48px;border-radius:8px;object-fit:cover;background:var(--surface-3)}
+  `;
+  document.head.appendChild(s);
+})();
 
 init();
