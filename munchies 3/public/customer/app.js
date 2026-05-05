@@ -72,6 +72,12 @@ function toast(title, body) {
 // ===== Money =====
 const $$ = c => `$${(c/100).toFixed(2)}`;
 
+// ===== XSS-safe rendering — escape any user/product data before rendering as HTML =====
+const esc = (s) => {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+};
+
 // ===== Address (persisted in browser localStorage) =====
 function getAddress() {
   return localStorage.getItem('munchies_address') || '';
@@ -296,9 +302,10 @@ screens.login = () => `
       <h2 style="font-size:22px;text-align:center">Welcome back</h2>
       <div class="field"><label>Email</label><input id="li-email" type="email" placeholder="you@example.com" value="shop@munchies.test" autocomplete="email"/></div>
       <div class="field"><label>Password</label><input id="li-pw" type="password" placeholder="••••••••" value="shop123" autocomplete="current-password"/></div>
-      ${state.error ? `<div class="error">${state.error}</div>`:''}
+      ${state.error ? `<div class="error">${esc(state.error)}</div>`:''}
       <button class="btn btn-primary" onclick="doLogin()">Sign in</button>
       <button class="btn btn-ghost" onclick="nav('signup')">Create account</button>
+      <a style="text-align:center;color:var(--neon);font-size:13px;cursor:pointer;margin-top:6px" onclick="forgotPassword()">Forgot password?</a>
       <p class="tiny muted" style="text-align:center;margin-top:auto;padding-bottom:20px">Demo: shop@munchies.test / shop123</p>
     </div>
   </div>`;
@@ -342,7 +349,7 @@ screens.signup = () => `
 
       <label style="display:flex;gap:10px;align-items:flex-start;font-size:12px;color:var(--text-dim);line-height:1.5;margin-top:8px"><input id="su-age" type="checkbox" checked style="margin-top:3px"/> I certify the date of birth above is accurate and I am 21+ years old.</label>
 
-      ${state.error ? `<div style="background:rgba(255,91,110,.08);border:1px solid rgba(255,91,110,.3);padding:12px;border-radius:10px;margin-top:8px;font-size:12px;color:var(--danger);line-height:1.5">${state.error}${(state.error.includes('failed')||state.error.includes('Network')||state.error.includes('fetch'))?'<div style="margin-top:8px;color:var(--text-dim)">💡 Free hosting may take ~30 seconds to wake up. Try again in a moment.</div>':''}</div>`:''}
+      ${state.error ? `<div style="background:rgba(255,91,110,.08);border:1px solid rgba(255,91,110,.3);padding:12px;border-radius:10px;margin-top:8px;font-size:12px;color:var(--danger);line-height:1.5">${esc(state.error)}${(state.error.includes('failed')||state.error.includes('Network')||state.error.includes('fetch'))?'<div style="margin-top:8px;color:var(--text-dim)">💡 Free hosting may take ~30 seconds to wake up. Try again in a moment.</div>':''}</div>`:''}
 
       <button class="btn btn-primary" style="margin-top:14px" id="su-btn" onclick="doSignup()">Create account</button>
 
@@ -527,18 +534,19 @@ function cartCount() { return state.cart.items.reduce((s,i)=>s+i.qty,0); }
 
 function productCardHTML(p) {
   const minPrice = p.variants && p.variants.length ? Math.min(...p.variants.map(v=>v.price_cents)) : 0;
+  // image_url is validated server-side; emoji also escaped via dataset to avoid XSS in onerror
   const imageHtml = p.image_url
-    ? `<img src="${p.image_url}" alt="${p.name}" style="width:100%;height:100%;object-fit:cover" onerror="this.replaceWith(Object.assign(document.createElement('span'),{style:'font-size:60px',textContent:'${p.emoji}'}))" />`
-    : `<span style="font-size:60px">${p.emoji}</span>`;
+    ? `<img src="${esc(p.image_url)}" alt="${esc(p.name)}" data-emoji="${esc(p.emoji||'🌿')}" style="width:100%;height:100%;object-fit:cover" onerror="this.replaceWith(Object.assign(document.createElement('span'),{style:'font-size:60px',textContent:this.dataset.emoji}))" />`
+    : `<span style="font-size:60px">${esc(p.emoji)}</span>`;
   return `
     <div class="pcard" onclick="openProduct(${p.id})">
       <div class="img" style="overflow:hidden">
-        ${p.tag?`<span class="tag">${p.tag}</span>`:''}
+        ${p.tag?`<span class="tag">${esc(p.tag)}</span>`:''}
         ${imageHtml}
       </div>
       <div class="meta">
-        <div class="title">${p.name}</div>
-        <div class="sub">${p.sub||''}</div>
+        <div class="title">${esc(p.name)}</div>
+        <div class="sub">${esc(p.sub||'')}</div>
         <div class="priceRow">
           <div class="price">${$$(minPrice)}</div>
           <button class="add" onclick="event.stopPropagation();quickAdd(${p.id})">
@@ -576,7 +584,11 @@ window.quickAdd = async (id) => {
 };
 
 screens.browse = () => {
-  const filtered = state.category ? state.products.filter(p=>p.category_id===state.category) : state.products;
+  let filtered = state.category ? state.products.filter(p=>p.category_id===state.category) : state.products;
+  if (state.searchQuery && state.searchQuery.trim()) {
+    const q = state.searchQuery.trim().toLowerCase();
+    filtered = filtered.filter(p => (p.name||'').toLowerCase().includes(q) || (p.sub||'').toLowerCase().includes(q) || (p.type||'').toLowerCase().includes(q));
+  }
   const cat = state.categories.find(c=>c.id===state.category);
   return `
   <div class="screen">
@@ -593,7 +605,8 @@ screens.browse = () => {
       </div>
       <div class="search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-        <input placeholder="Search products..." />
+        <input id="browse-search" placeholder="Search products..." value="${esc(state.searchQuery||'')}" oninput="state.searchQuery=this.value;runSearch()" />
+        ${state.searchQuery?`<span style="cursor:pointer;color:var(--text-mute);padding:0 6px" onclick="state.searchQuery='';render()">×</span>`:''}
       </div>
       <div class="filter-row">
         <div class="chip ${!state.category?'active':''}" onclick="state.category=null;render()">All</div>
@@ -614,29 +627,29 @@ screens.product = () => {
       <div class="pd-hero" style="overflow:hidden">
         <div class="pd-back" onclick="back()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg></div>
         ${p.image_url
-          ? `<img src="${p.image_url}" alt="${p.name}" style="width:100%;height:100%;object-fit:cover;position:absolute;top:0;left:0" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'emoji',textContent:'${p.emoji}'}))" />`
-          : `<div class="emoji">${p.emoji}</div>`
+          ? `<img src="${esc(p.image_url)}" alt="${esc(p.name)}" data-emoji="${esc(p.emoji||'🌿')}" style="width:100%;height:100%;object-fit:cover;position:absolute;top:0;left:0" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'emoji',textContent:this.dataset.emoji}))" />`
+          : `<div class="emoji">${esc(p.emoji)}</div>`
         }
       </div>
       <div class="pd-body">
         <div class="pd-strain-row">
-          <span class="badge neon">${p.type}</span>
+          <span class="badge neon">${esc(p.type)}</span>
           <span class="badge">Lab tested</span>
           <span class="badge gold">⚡ 45min delivery</span>
         </div>
-        <h1 class="pd-title">${p.name}</h1>
-        <div class="pd-rating"><span class="stars">★★★★★</span><span>${p.rating} · ${p.review_count} reviews</span></div>
+        <h1 class="pd-title">${esc(p.name)}</h1>
+        <div class="pd-rating"><span class="stars">★★★★★</span><span>${esc(p.rating)} · ${esc(p.review_count)} reviews</span></div>
         <div class="pd-stat-row">
-          <div class="pd-stat"><div class="v">${p.thc||'—'}</div><div class="l">THCA</div></div>
-          <div class="pd-stat"><div class="v">${p.cbd||'—'}</div><div class="l">CBD</div></div>
-          <div class="pd-stat"><div class="v">${p.type}</div><div class="l">Strain</div></div>
+          <div class="pd-stat"><div class="v">${esc(p.thc||'—')}</div><div class="l">THCA</div></div>
+          <div class="pd-stat"><div class="v">${esc(p.cbd||'—')}</div><div class="l">CBD</div></div>
+          <div class="pd-stat"><div class="v">${esc(p.type)}</div><div class="l">Strain</div></div>
         </div>
         <div class="pd-section-title">Description</div>
-        <p class="pd-desc">${p.description||''}</p>
+        <p class="pd-desc">${esc(p.description||'')}</p>
         <div class="pd-section-title">Choose size</div>
         <div class="pd-options">
           ${p.variants.map((vv,i)=>`<div class="pd-opt ${vv.id===v.id?'active':''}" onclick="state.selectedVariant=state.selectedProduct.variants[${i}];render()">
-            <div class="w">${vv.size}</div><div class="p">${$$(vv.price_cents)}</div>
+            <div class="w">${esc(vv.size)}</div><div class="p">${$$(vv.price_cents)}</div>
           </div>`).join('')}
         </div>
         <div class="pd-section-title">Subscribe & save</div>
@@ -696,7 +709,7 @@ screens.cart = () => {
           <div class="cart-item">
             <div class="ci-img" style="overflow:hidden">${it.image_url?`<img src="${it.image_url}" style="width:100%;height:100%;object-fit:cover" alt=""/>`:`<span style="font-size:30px">${it.emoji}</span>`}</div>
             <div class="ci-meta">
-              <div class="ci-title">${it.name}</div>
+              <div class="ci-title">${esc(it.name)}</div>
               <div class="ci-sub">${it.size} · ${it.type}</div>
               <div class="ci-price">${$$(it.price_cents*it.qty)}</div>
             </div>
@@ -873,10 +886,10 @@ async function refreshTracking() {
       <div class="section" style="padding:0 22px;margin-bottom:14px">
         <div class="hero" style="padding:18px;background:var(--surface-2);cursor:default">
           <div class="row" style="margin-bottom:10px">
-            <div style="width:50px;height:50px;border-radius:50%;background:linear-gradient(135deg,var(--neon),var(--gold));display:grid;place-items:center;font-family:'Syne';font-weight:700;color:#0a0a0b">${order.driver?order.driver.name.split(' ').map(s=>s[0]).join(''):'—'}</div>
+            <div style="width:50px;height:50px;border-radius:50%;background:linear-gradient(135deg,var(--neon),var(--gold));display:grid;place-items:center;font-family:'Syne';font-weight:700;color:#0a0a0b">${order.driver?esc(order.driver.name.split(' ').map(s=>s[0]).join('')):'—'}</div>
             <div style="flex:1">
-              <div style="font-weight:700">${order.driver?order.driver.name:'Awaiting driver'}</div>
-              <div class="muted tiny">Order #${order.order_no}</div>
+              <div style="font-weight:700">${order.driver?esc(order.driver.name):'Awaiting driver'}</div>
+              <div class="muted tiny">Order #${esc(order.order_no)}</div>
             </div>
           </div>
           ${order.address?`<div class="muted tiny" style="margin-bottom:6px">📍 ${order.address}</div>`:''}
@@ -903,7 +916,7 @@ async function refreshTracking() {
       </div>
       <div class="section" style="padding:0 22px;margin-top:8px">
         <h3 style="font-size:14px;margin-bottom:10px">Items</h3>
-        ${order.items.map(it=>`<div class="cart-item"><div class="ci-img">📦</div><div class="ci-meta"><div class="ci-title">${it.product_name}</div><div class="ci-sub">${it.size} × ${it.qty}</div><div class="ci-price">${$$(it.price_cents*it.qty)}</div></div></div>`).join('')}
+        ${order.items.map(it=>`<div class="cart-item"><div class="ci-img">📦</div><div class="ci-meta"><div class="ci-title">${esc(it.product_name)}</div><div class="ci-sub">${esc(it.size)} × ${it.qty}</div><div class="ci-price">${$$(it.price_cents*it.qty)}</div></div></div>`).join('')}
       </div>
       <div class="section" style="padding:0 22px">
         <div class="totals">
@@ -942,11 +955,11 @@ async function loadOrders() {
       return;
     }
     c.innerHTML = orders.map(o=>`
-      <div class="cart-item" onclick="state.currentOrder=${o.id};nav('tracking')" style="cursor:pointer">
-        <div class="ci-img">${o.status==='delivered'?'✅':'🚚'}</div>
+      <div class="cart-item" onclick="state.currentOrder=${o.id};nav('orderdetail')" style="cursor:pointer">
+        <div class="ci-img">${o.status==='delivered'?'✅':o.status==='cancelled'?'❌':'🚚'}</div>
         <div class="ci-meta">
-          <div class="ci-title">Order #${o.order_no} · ${o.status.replace(/_/g,' ')}</div>
-          <div class="ci-sub">${new Date(o.created_at).toLocaleDateString()} · ${o.fulfillment}</div>
+          <div class="ci-title">Order #${esc(o.order_no)} · ${esc(o.status.replace(/_/g,' '))}</div>
+          <div class="ci-sub">${new Date(o.created_at).toLocaleDateString()} · ${esc(o.fulfillment)}</div>
           <div class="ci-price">${$$(o.total_cents)}</div>
         </div>
         <div style="font-size:24px;color:var(--text-mute)">→</div>
@@ -1003,13 +1016,15 @@ screens.profile = () => {
         <div class="icon-btn" onclick="doLogout()" title="Sign out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></div>
       </div>
       <div class="avatar-block">
-        <div class="avatar">${u.name.split(' ').map(s=>s[0]).join('').slice(0,2).toUpperCase()}</div>
+        <div class="avatar">${esc(u.name.split(' ').map(s=>s[0]).join('').slice(0,2).toUpperCase())}</div>
         <div>
-          <div style="font-family:'Syne';font-size:20px;font-weight:700">${u.name}</div>
-          <div class="muted tiny">★ ${u.loyalty_tier} · ${u.loyalty_points} pts</div>
+          <div style="font-family:'Syne';font-size:20px;font-weight:700">${esc(u.name)}</div>
+          <div class="muted tiny">★ ${esc(u.loyalty_tier)} · ${u.loyalty_points} pts</div>
         </div>
       </div>
       <div style="padding:0 22px">
+        <div class="prof-row" onclick="nav('editprofile')"><div class="ic">✏️</div><div class="lbl">Edit profile</div><div style="color:var(--text-mute);font-size:18px">›</div></div>
+        <div class="prof-row" onclick="nav('changepassword')"><div class="ic">🔑</div><div class="lbl">Change password</div><div style="color:var(--text-mute);font-size:18px">›</div></div>
         <div class="prof-row" onclick="nav('orders')"><div class="ic">📦</div><div class="lbl">Order history</div><div style="color:var(--text-mute);font-size:18px">›</div></div>
         <div class="prof-row" onclick="nav('rewards')"><div class="ic">⭐</div><div class="lbl">Rewards & points</div><div class="badge gold">${u.loyalty_points} pts</div><div style="color:var(--text-mute);font-size:18px">›</div></div>
         <div class="prof-row" onclick="editAddress()" style="cursor:pointer">
@@ -1075,7 +1090,11 @@ screens.payments = () => `
 // ===== ID Verification =====
 // ===== ID Verification — real flow =====
 // Photos are stored in browser memory until the user submits. Resized client-side first.
-const verifPhotos = { front: null, back: null, selfie: null };
+// In-progress verification photos persist in sessionStorage so user can refresh without losing work
+const verifPhotos = new Proxy({}, {
+  get(_, k) { return sessionStorage.getItem('munchies_verif_' + k) || null; },
+  set(_, k, v) { if (v) sessionStorage.setItem('munchies_verif_' + k, v); else sessionStorage.removeItem('munchies_verif_' + k); return true; }
+});
 
 screens.idverify = () => {
   const status = state.user?.verification_status || 'unverified';
@@ -1426,6 +1445,185 @@ window.toggleFaq = (key) => {
   if (arrow) arrow.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(90deg)';
 };
 
+// ===== Search debounce =====
+let _searchTimer;
+window.runSearch = () => {
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(() => {
+    const v = document.getElementById('browse-search')?.value || '';
+    state.searchQuery = v;
+    // Re-render only the products grid for performance
+    render();
+    // Restore focus + cursor position
+    const inp = document.getElementById('browse-search');
+    if (inp) { inp.focus(); inp.setSelectionRange(v.length, v.length); }
+  }, 200);
+};
+
+// ===== Edit profile screen =====
+screens.editprofile = () => {
+  const u = state.user || {};
+  return `
+  <div class="screen">
+    <div class="simple-header">
+      <div class="b" onclick="back()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg></div>
+      <div class="t">Edit profile</div>
+    </div>
+    <div class="scroll" style="padding:8px 28px 40px">
+      <div class="field" style="margin-top:14px"><label>Full name</label><input id="ep-name" value="${esc(u.name||'')}" autocapitalize="words"/></div>
+      <div class="field"><label>Email</label><input value="${esc(u.email||'')}" disabled style="opacity:0.6"/><div class="muted tiny" style="margin-top:4px">Email cannot be changed</div></div>
+      <div class="field"><label>Phone</label><input id="ep-phone" type="tel" value="${esc(u.phone||'')}" placeholder="+1 (555) 123-4567"/></div>
+      ${state.error ? `<div class="error">${esc(state.error)}</div>`:''}
+      <button class="btn btn-primary" style="margin-top:14px" onclick="saveProfile()">Save changes</button>
+      <button class="btn btn-ghost" style="margin-top:8px" onclick="nav('changepassword')">Change password →</button>
+    </div>
+  </div>`;
+};
+window.saveProfile = async () => {
+  state.error = null;
+  const name = document.getElementById('ep-name').value.trim();
+  const phone = document.getElementById('ep-phone').value.trim();
+  if (!name) { state.error = 'Name is required.'; render(); return; }
+  try {
+    await api('/me', { method:'PATCH', body: { name, phone }});
+    const { user } = await api('/me'); state.user = user;
+    toast('Saved', 'Profile updated');
+    nav('profile');
+  } catch (e) { state.error = e.message; render(); }
+};
+
+// ===== Change password screen =====
+screens.changepassword = () => `
+  <div class="screen">
+    <div class="simple-header">
+      <div class="b" onclick="back()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg></div>
+      <div class="t">Change password</div>
+    </div>
+    <div class="scroll" style="padding:8px 28px 40px">
+      <div class="field" style="margin-top:14px"><label>Current password</label><input id="cp-current" type="password" autocomplete="current-password"/></div>
+      <div class="field"><label>New password</label><input id="cp-new" type="password" autocomplete="new-password" placeholder="At least 8 characters"/></div>
+      <div class="field"><label>Confirm new password</label><input id="cp-new2" type="password" autocomplete="new-password"/></div>
+      ${state.error ? `<div class="error">${esc(state.error)}</div>`:''}
+      <button class="btn btn-primary" style="margin-top:14px" onclick="changePassword()">Update password</button>
+    </div>
+  </div>`;
+window.changePassword = async () => {
+  state.error = null;
+  const current_password = document.getElementById('cp-current').value;
+  const new_password = document.getElementById('cp-new').value;
+  const confirm = document.getElementById('cp-new2').value;
+  if (!current_password || !new_password) { state.error = 'Please fill all fields.'; render(); return; }
+  if (new_password.length < 8) { state.error = 'New password must be at least 8 characters.'; render(); return; }
+  if (new_password !== confirm) { state.error = "Passwords don't match."; render(); return; }
+  try {
+    await api('/me/change-password', { method:'POST', body: { current_password, new_password }});
+    toast('Updated', 'Your password was changed');
+    nav('profile');
+  } catch (e) { state.error = e.message; render(); }
+};
+
+// ===== Forgot password (login screen helper) =====
+window.forgotPassword = async () => {
+  const email = prompt('Enter your account email — we\'ll send a password reset link if it exists.');
+  if (!email) return;
+  try {
+    const r = await api('/auth/forgot-password', { method:'POST', body: { email }});
+    toast('Sent', r.message || 'Check your email');
+  } catch (e) { toast('Error', e.message); }
+};
+
+// ===== Order detail screen with cancel/reorder =====
+screens.orderdetail = () => {
+  if (!state.currentOrder) { nav('orders'); return ''; }
+  return `
+  <div class="screen">
+    <div class="simple-header">
+      <div class="b" onclick="nav('orders')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg></div>
+      <div class="t">Order details</div>
+    </div>
+    <div class="scroll" id="orderdetail-content" style="padding-bottom:40px">
+      <div class="center-loading" style="height:200px"><div class="spinner"></div></div>
+    </div>
+  </div>`;
+};
+async function loadOrderDetail() {
+  if (state.screen !== 'orderdetail' || !state.currentOrder) return;
+  try {
+    const { order } = await api('/orders/' + state.currentOrder);
+    const c = document.getElementById('orderdetail-content');
+    if (!c) return;
+    const canCancel = ['placed','packed'].includes(order.status);
+    const isDelivered = order.status === 'delivered';
+    c.innerHTML = `
+      <div class="section" style="padding:18px 22px 14px">
+        <div class="between">
+          <div>
+            <div style="font-family:'Syne';font-size:20px;font-weight:700">Order #${esc(order.order_no)}</div>
+            <div class="muted tiny" style="margin-top:4px">${new Date(order.created_at).toLocaleString()}</div>
+          </div>
+          <div class="badge ${order.status==='delivered'?'neon':order.status==='cancelled'?'':order.status==='out_for_delivery'?'gold':''}">${esc(order.status.replace(/_/g,' '))}</div>
+        </div>
+      </div>
+      ${order.address ? `<div class="prof-row" style="margin:0 22px 10px">
+        <div class="ic">📍</div>
+        <div style="flex:1"><div style="font-weight:600;font-size:13px">Delivery address</div><div class="muted tiny" style="margin-top:2px">${esc(order.address)}</div></div>
+      </div>` : ''}
+      <div class="pd-section-title" style="padding:0 22px;margin-top:8px">Items</div>
+      <div style="padding:0 22px">
+        ${order.items.map(it=>`
+          <div class="cart-item">
+            <div class="ci-img">📦</div>
+            <div class="ci-meta">
+              <div class="ci-title">${esc(it.product_name)}</div>
+              <div class="ci-sub">${esc(it.size)} × ${it.qty}</div>
+              <div class="ci-price">${$$(it.price_cents*it.qty)}</div>
+            </div>
+          </div>`).join('')}
+      </div>
+      <div class="section" style="padding:0 22px;margin-top:8px">
+        <div class="totals">
+          <div class="row"><span>Subtotal</span><span>${$$(order.subtotal_cents)}</span></div>
+          ${order.discount_cents>0?`<div class="row" style="color:var(--neon)"><span>Discount</span><span>−${$$(order.discount_cents)}</span></div>`:''}
+          <div class="row"><span>${order.fulfillment==='delivery'?'Delivery':'Pickup'}</span><span>${$$(order.delivery_cents)}</span></div>
+          <div class="row"><span>Tax</span><span>${$$(order.tax_cents)}</span></div>
+          <div class="row total"><span>Total</span><span class="v">${$$(order.total_cents)}</span></div>
+        </div>
+      </div>
+      ${order.cancel_reason?`<div class="prof-row" style="margin:0 22px 10px;background:rgba(255,91,110,.06);border-color:rgba(255,91,110,.3)">
+        <div class="ic" style="color:var(--danger)">⚠️</div>
+        <div style="flex:1"><div style="font-weight:600;font-size:13px">Cancellation reason</div><div class="muted tiny" style="margin-top:2px">${esc(order.cancel_reason)}</div></div>
+      </div>`:''}
+      <div style="padding:0 22px;margin-top:14px;display:flex;flex-direction:column;gap:8px">
+        ${canCancel?`<button class="btn btn-ghost" style="border-color:var(--danger);color:var(--danger)" onclick="cancelOrder(${order.id})">Cancel order</button>`:''}
+        ${isDelivered?`<button class="btn btn-primary" onclick="reorderPast(${order.id})">🔁 Reorder these items</button>`:''}
+        <button class="btn btn-ghost" onclick="state.currentOrder=${order.id};nav('tracking')">View tracking →</button>
+      </div>
+    `;
+  } catch (e) {
+    document.getElementById('orderdetail-content').innerHTML = `<p class="muted tiny" style="text-align:center;padding:40px">Failed to load order: ${esc(e.message)}</p>`;
+  }
+}
+
+window.cancelOrder = async (id) => {
+  const reason = prompt('Why are you cancelling this order? (optional)') ?? '';
+  if (reason === null) return;
+  if (!confirm('Cancel this order? Inventory and points will be restored.')) return;
+  try {
+    await api('/orders/' + id + '/cancel', { method:'POST', body: { reason: reason || null }});
+    toast('Cancelled', 'Order cancelled, points refunded');
+    loadOrderDetail();
+  } catch (e) { toast('Failed', e.message); }
+};
+
+window.reorderPast = async (id) => {
+  try {
+    const r = await api('/orders/' + id + '/reorder', { method:'POST' });
+    state.cart = await api('/cart');
+    toast(`Added ${r.added} items`, r.skipped > 0 ? `${r.skipped} item(s) unavailable and skipped` : 'Cart updated');
+    nav('cart');
+  } catch (e) { toast('Failed', e.message); }
+};
+
 // ===== Render =====
 function render() {
   const fn = screens[state.screen] || screens.splash;
@@ -1433,6 +1631,7 @@ function render() {
   // hooks
   if (state.screen === 'tracking') refreshTracking();
   if (state.screen === 'orders') loadOrders();
+  if (state.screen === 'orderdetail') loadOrderDetail();
 }
 window.render = render;
 window.state = state;

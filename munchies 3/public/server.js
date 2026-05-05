@@ -139,6 +139,19 @@ safeAddColumn('users', 'verification_notes', 'TEXT');
 // Delivery proof columns on orders
 safeAddColumn('orders', 'delivery_id_photo_url', 'TEXT');
 safeAddColumn('orders', 'delivery_proof_photo_url', 'TEXT');
+safeAddColumn('orders', 'cancelled_at', 'TEXT');
+safeAddColumn('orders', 'cancelled_by', 'TEXT');
+safeAddColumn('orders', 'cancel_reason', 'TEXT');
+safeAddColumn('orders', 'refusal_reason', 'TEXT');
+// User profile
+safeAddColumn('users', 'dob', 'TEXT'); // YYYY-MM-DD
+safeAddColumn('users', 'default_address', 'TEXT');
+safeAddColumn('users', 'is_blocked', 'INTEGER DEFAULT 0');
+safeAddColumn('users', 'driver_online', 'INTEGER DEFAULT 1');
+// Promo enhancements
+safeAddColumn('promos', 'max_uses', 'INTEGER');
+safeAddColumn('promos', 'uses_count', 'INTEGER DEFAULT 0');
+safeAddColumn('promos', 'expires_at', 'TEXT');
 
 // seed defaults if empty
 import('./seed.js').then(m => m.seedIfEmpty(db)).catch(()=>{});
@@ -179,6 +192,23 @@ function requireAuth(roles) {
 function genOrderNo() {
   return 'M-' + String(Math.floor(1000 + Math.random() * 9000)) + Date.now().toString().slice(-3);
 }
+function isStrongPassword(p) { return typeof p === 'string' && p.length >= 8; }
+function isValidEmail(e) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e); }
+function isValidImageUrl(u) {
+  if (!u) return true; // null/empty allowed
+  if (u.startsWith('data:image/')) return true; // base64 image
+  return /^https:\/\/[^\s]+$/.test(u); // https URL only
+}
+function calcAge(dob) {
+  if (!dob) return null;
+  const birth = new Date(dob);
+  if (isNaN(birth)) return null;
+  const today = new Date();
+  let age = today.getFullYear() - birth.getFullYear();
+  const m = today.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
+  return age;
+}
 function tierFor(points) {
   if (points >= 2000) return 'Platinum';
   if (points >= 1000) return 'Gold';
@@ -190,15 +220,21 @@ app.use(authOptional);
 
 // ---- Auth ----
 app.post('/api/auth/signup', (req, res) => {
-  const { email, password, name, phone, age_ok } = req.body || {};
+  const { email, password, name, phone, age_ok, dob } = req.body || {};
   if (!email || !password || !name) return res.status(400).json({ error: 'missing fields' });
+  if (!isValidEmail(email)) return res.status(400).json({ error: 'invalid email format' });
+  if (!isStrongPassword(password)) return res.status(400).json({ error: 'password must be at least 8 characters' });
   if (!age_ok) return res.status(400).json({ error: 'age verification required (21+)' });
+  if (dob) {
+    const age = calcAge(dob);
+    if (age === null || age < 21) return res.status(400).json({ error: `must be 21+ to sign up (calculated age: ${age})` });
+  }
   const exists = db.prepare('SELECT id FROM users WHERE email=?').get(email.toLowerCase());
   if (exists) return res.status(409).json({ error: 'email already registered' });
   const hash = bcrypt.hashSync(password, 10);
-  const r = db.prepare(`INSERT INTO users (email,password_hash,name,phone,age_verified,role) VALUES (?,?,?,?,1,'customer')`)
-    .run(email.toLowerCase(), hash, name, phone || null);
-  const user = db.prepare('SELECT id,email,name,role,loyalty_points,loyalty_tier FROM users WHERE id=?').get(r.lastInsertRowid);
+  const r = db.prepare(`INSERT INTO users (email,password_hash,name,phone,dob,age_verified,role) VALUES (?,?,?,?,?,1,'customer')`)
+    .run(email.toLowerCase(), hash, name, phone || null, dob || null);
+  const user = db.prepare('SELECT id,email,name,role,loyalty_points,loyalty_tier FROM users WHERE id=?').get(Number(r.lastInsertRowid));
   res.cookie('token', makeToken(user), { httpOnly: true, sameSite: 'lax', maxAge: 30*24*60*60*1000 });
   res.json({ user });
 });
@@ -208,8 +244,43 @@ app.post('/api/auth/login', (req, res) => {
   if (!email || !password) return res.status(400).json({ error: 'missing fields' });
   const row = db.prepare('SELECT * FROM users WHERE email=?').get(email.toLowerCase());
   if (!row || !bcrypt.compareSync(password, row.password_hash)) return res.status(401).json({ error: 'invalid credentials' });
+  if (row.is_blocked) return res.status(403).json({ error: 'this account has been suspended. contact support.' });
   res.cookie('token', makeToken(row), { httpOnly: true, sameSite: 'lax', maxAge: 30*24*60*60*1000 });
   res.json({ user: { id: row.id, email: row.email, name: row.name, role: row.role, loyalty_points: row.loyalty_points, loyalty_tier: row.loyalty_tier } });
+});
+
+// ---- Profile / password endpoints ----
+app.patch('/api/me', requireAuth(), (req, res) => {
+  const { name, phone, default_address } = req.body || {};
+  const sets = []; const vals = [];
+  if (name !== undefined && name.trim()) { sets.push('name=?'); vals.push(name.trim()); }
+  if (phone !== undefined) { sets.push('phone=?'); vals.push(phone || null); }
+  if (default_address !== undefined) { sets.push('default_address=?'); vals.push(default_address || null); }
+  if (sets.length === 0) return res.status(400).json({ error: 'nothing to update' });
+  vals.push(req.user.id);
+  db.prepare(`UPDATE users SET ${sets.join(',')} WHERE id=?`).run(...vals);
+  res.json({ ok: true });
+});
+
+app.post('/api/me/change-password', requireAuth(), (req, res) => {
+  const { current_password, new_password } = req.body || {};
+  if (!current_password || !new_password) return res.status(400).json({ error: 'missing fields' });
+  if (!isStrongPassword(new_password)) return res.status(400).json({ error: 'new password must be at least 8 characters' });
+  const row = db.prepare('SELECT password_hash FROM users WHERE id=?').get(req.user.id);
+  if (!bcrypt.compareSync(current_password, row.password_hash)) return res.status(401).json({ error: 'current password is incorrect' });
+  const hash = bcrypt.hashSync(new_password, 10);
+  db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(hash, req.user.id);
+  res.json({ ok: true });
+});
+
+// Forgot password: dev-friendly stub. In production, send a reset email with a one-time token.
+app.post('/api/auth/forgot-password', (req, res) => {
+  const { email } = req.body || {};
+  if (!email) return res.status(400).json({ error: 'email required' });
+  // Always return ok to prevent email enumeration
+  // TODO: when SMTP is configured, generate a reset token and email it
+  console.log(`[forgot-password] requested for ${email}`);
+  res.json({ ok: true, message: 'if an account exists with that email, a reset link has been sent.' });
 });
 
 app.post('/api/auth/logout', (_req, res) => {
@@ -334,10 +405,32 @@ app.post('/api/orders', requireAuth(['customer']), (req, res) => {
   const { fulfillment = 'delivery', address, promo_code } = req.body || {};
   const cart = cartView(req.user.id);
   if (cart.items.length === 0) return res.status(400).json({ error: 'cart is empty' });
+  if (fulfillment === 'delivery' && (!address || !address.trim())) return res.status(400).json({ error: 'delivery address is required' });
+
+  // age-verification gate: customer must be approved before placing an order
+  const me = db.prepare('SELECT verification_status FROM users WHERE id=?').get(req.user.id);
+  if (me?.verification_status === 'rejected') return res.status(403).json({ error: 'your ID verification was rejected. please re-submit.' });
+  // (we still allow 'unverified' and 'pending' to order — driver does final check at delivery)
+
+  // inventory check — prevent overselling
+  for (const it of cart.items) {
+    const v = db.prepare('SELECT v.stock, p.active FROM product_variants v JOIN products p ON p.id=v.product_id WHERE v.id=?').get(it.variant_id);
+    if (!v || !v.active) return res.status(400).json({ error: `${it.name} is no longer available` });
+    if (v.stock < it.qty) return res.status(409).json({ error: `${it.name} (${it.size}) — only ${v.stock} in stock` });
+  }
+
   let discount_cents = 0;
+  let promo_record = null;
   if (promo_code) {
-    const p = db.prepare('SELECT * FROM promos WHERE code=? AND active=1').get(promo_code.toUpperCase());
-    if (p) discount_cents = Math.round(cart.subtotal_cents * p.percent_off / 100);
+    promo_record = db.prepare('SELECT * FROM promos WHERE code=? AND active=1').get(promo_code.toUpperCase());
+    if (promo_record) {
+      // Validate promo: not expired, not exhausted
+      if (promo_record.expires_at && new Date(promo_record.expires_at) < new Date()) return res.status(400).json({ error: 'promo code has expired' });
+      if (promo_record.max_uses && promo_record.uses_count >= promo_record.max_uses) return res.status(400).json({ error: 'promo code has reached its usage limit' });
+      discount_cents = Math.round(cart.subtotal_cents * promo_record.percent_off / 100);
+    } else {
+      return res.status(400).json({ error: 'invalid promo code' });
+    }
   }
   const delivery_cents = fulfillment === 'delivery' ? 499 : 0;
   const tax_cents = Math.round((cart.subtotal_cents - discount_cents) * 0.08);
@@ -364,6 +457,9 @@ app.post('/api/orders', requireAuth(['customer']), (req, res) => {
     db.prepare('UPDATE users SET loyalty_points = loyalty_points + ? WHERE id=?').run(pts, req.user.id);
     const u = db.prepare('SELECT loyalty_points FROM users WHERE id=?').get(req.user.id);
     db.prepare('UPDATE users SET loyalty_tier=? WHERE id=?').run(tierFor(u.loyalty_points), req.user.id);
+    if (promo_record) {
+      db.prepare('UPDATE promos SET uses_count = uses_count + 1 WHERE code=?').run(promo_record.code);
+    }
     db.exec('COMMIT');
     result = { id: oid, order_no, points_earned: pts };
   } catch (e) {
@@ -381,11 +477,65 @@ app.get('/api/orders', requireAuth(), (req, res) => {
 app.get('/api/orders/:id', requireAuth(), (req, res) => {
   const o = db.prepare('SELECT * FROM orders WHERE id=?').get(req.params.id);
   if (!o) return res.status(404).json({ error: 'not found' });
-  if (o.user_id !== req.user.id && req.user.role !== 'admin' && req.user.id !== o.driver_id) return res.status(403).json({});
+  // strict access: customer can see own, admin can see all, driver can ONLY see orders assigned to them
+  const isOwner = o.user_id === req.user.id;
+  const isAdmin = req.user.role === 'admin';
+  const isAssignedDriver = req.user.role === 'driver' && o.driver_id === req.user.id;
+  if (!isOwner && !isAdmin && !isAssignedDriver) return res.status(403).json({ error: 'forbidden' });
   const items = db.prepare('SELECT * FROM order_items WHERE order_id=?').all(o.id);
-  const driver = o.driver_id ? db.prepare('SELECT id,name FROM users WHERE id=?').get(o.driver_id) : null;
-  const customer = db.prepare('SELECT id,name,phone FROM users WHERE id=?').get(o.user_id);
+  const driver = o.driver_id ? db.prepare('SELECT id,name,phone FROM users WHERE id=?').get(o.driver_id) : null;
+  // Driver gets customer DOB so they can verify ID age at delivery; admin sees everything; customer sees their own info
+  const customerSelect = isAssignedDriver ? 'id,name,phone,dob' : isAdmin ? 'id,name,phone,email,dob,verification_status' : 'id,name,phone';
+  const customer = db.prepare(`SELECT ${customerSelect} FROM users WHERE id=?`).get(o.user_id);
+  if (customer && customer.dob) customer.age = calcAge(customer.dob);
   res.json({ order: { ...o, items, driver, customer } });
+});
+
+// ---- Order cancellation ----
+app.post('/api/orders/:id/cancel', requireAuth(), (req, res) => {
+  const { reason } = req.body || {};
+  const o = db.prepare('SELECT * FROM orders WHERE id=?').get(req.params.id);
+  if (!o) return res.status(404).json({ error: 'not found' });
+  const isOwner = o.user_id === req.user.id;
+  const isAdmin = req.user.role === 'admin';
+  if (!isOwner && !isAdmin) return res.status(403).json({ error: 'forbidden' });
+  if (o.status === 'delivered') return res.status(400).json({ error: 'delivered orders cannot be cancelled — request a refund instead' });
+  if (o.status === 'cancelled') return res.status(400).json({ error: 'order is already cancelled' });
+  if (o.status === 'out_for_delivery' && !isAdmin) return res.status(400).json({ error: 'order is already out for delivery — contact support' });
+
+  db.exec('BEGIN');
+  try {
+    db.prepare(`UPDATE orders SET status='cancelled', cancelled_at=CURRENT_TIMESTAMP, cancelled_by=?, cancel_reason=? WHERE id=?`)
+      .run(isAdmin ? 'admin' : 'customer', reason || null, o.id);
+    // restore inventory
+    const items = db.prepare('SELECT * FROM order_items WHERE order_id=?').all(o.id);
+    const restore = db.prepare('UPDATE product_variants SET stock = stock + ? WHERE id=?');
+    for (const it of items) restore.run(it.qty, it.variant_id);
+    // reverse loyalty points
+    const refundedPoints = Math.floor(o.total_cents / 10);
+    db.prepare('UPDATE users SET loyalty_points = MAX(loyalty_points - ?, 0) WHERE id=?').run(refundedPoints, o.user_id);
+    db.exec('COMMIT');
+    res.json({ ok: true });
+  } catch (e) {
+    db.exec('ROLLBACK');
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---- Reorder (creates a new cart from a past order) ----
+app.post('/api/orders/:id/reorder', requireAuth(['customer']), (req, res) => {
+  const o = db.prepare('SELECT * FROM orders WHERE id=? AND user_id=?').get(req.params.id, req.user.id);
+  if (!o) return res.status(404).json({ error: 'not found' });
+  const items = db.prepare('SELECT * FROM order_items WHERE order_id=?').all(o.id);
+  let added = 0; let skipped = 0;
+  const ins = db.prepare(`INSERT INTO cart_items (user_id,variant_id,qty) VALUES (?,?,?) ON CONFLICT(user_id,variant_id) DO UPDATE SET qty=qty+excluded.qty`);
+  for (const it of items) {
+    // verify variant still exists and is active
+    const v = db.prepare('SELECT v.id, v.stock, p.active FROM product_variants v JOIN products p ON p.id=v.product_id WHERE v.id=?').get(it.variant_id);
+    if (v && v.active && v.stock > 0) { ins.run(req.user.id, it.variant_id, Math.min(it.qty, v.stock)); added++; }
+    else { skipped++; }
+  }
+  res.json({ ok: true, added, skipped });
 });
 
 // ---- Stripe (test mode optional) ----
@@ -431,12 +581,27 @@ app.get('/api/admin/orders', requireAuth(['admin']), (req, res) => {
   res.json({ orders: db.prepare(sql).all(...params) });
 });
 
+// Order state transitions allowed (forward-only with cancel exception)
+const ORDER_TRANSITIONS = {
+  placed: ['packed', 'cancelled'],
+  packed: ['out_for_delivery', 'cancelled'],
+  out_for_delivery: ['delivered', 'cancelled'],
+  delivered: [],
+  cancelled: [],
+};
+
 app.patch('/api/admin/orders/:id', requireAuth(['admin']), (req, res) => {
   const { status, driver_id } = req.body || {};
+  const o = db.prepare('SELECT status FROM orders WHERE id=?').get(req.params.id);
+  if (!o) return res.status(404).json({ error: 'order not found' });
   const sets = []; const vals = [];
-  if (status) { sets.push('status=?'); vals.push(status); }
-  if (driver_id !== undefined) { sets.push('driver_id=?'); vals.push(driver_id); }
-  if (status === 'delivered') { sets.push('delivered_at=CURRENT_TIMESTAMP'); }
+  if (status) {
+    const allowed = ORDER_TRANSITIONS[o.status] || [];
+    if (!allowed.includes(status) && status !== o.status) return res.status(400).json({ error: `cannot change status from ${o.status} to ${status}` });
+    sets.push('status=?'); vals.push(status);
+    if (status === 'delivered') sets.push('delivered_at=CURRENT_TIMESTAMP');
+  }
+  if (driver_id !== undefined) { sets.push('driver_id=?'); vals.push(driver_id || null); }
   if (sets.length === 0) return res.status(400).json({ error: 'nothing to update' });
   vals.push(req.params.id);
   db.prepare(`UPDATE orders SET ${sets.join(',')} WHERE id=?`).run(...vals);
@@ -499,19 +664,111 @@ app.delete('/api/admin/products/:id', requireAuth(['admin']), (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/admin/customers', requireAuth(['admin']), (_req, res) => {
-  const rows = db.prepare(`
-    SELECT u.id,u.name,u.email,u.phone,u.loyalty_points,u.loyalty_tier,u.created_at,
-      (SELECT COUNT(*) FROM orders WHERE user_id=u.id) as order_count,
-      (SELECT COALESCE(SUM(total_cents),0) FROM orders WHERE user_id=u.id) as ltv_cents
-    FROM users u WHERE role='customer' ORDER BY ltv_cents DESC LIMIT 200
-  `).all();
-  res.json({ customers: rows });
+app.get('/api/admin/customers', requireAuth(['admin']), (req, res) => {
+  const search = req.query.search || '';
+  let sql = `SELECT u.id,u.name,u.email,u.phone,u.dob,u.loyalty_points,u.loyalty_tier,u.verification_status,u.is_blocked,u.created_at,
+    (SELECT COUNT(*) FROM orders WHERE user_id=u.id) as order_count,
+    (SELECT COALESCE(SUM(total_cents),0) FROM orders WHERE user_id=u.id AND status='delivered') as ltv_cents
+    FROM users u WHERE role='customer'`;
+  const params = [];
+  if (search) { sql += ' AND (u.name LIKE ? OR u.email LIKE ? OR u.phone LIKE ?)'; params.push(`%${search}%`,`%${search}%`,`%${search}%`); }
+  sql += ' ORDER BY ltv_cents DESC LIMIT 200';
+  res.json({ customers: db.prepare(sql).all(...params) });
+});
+
+app.get('/api/admin/customers/:id', requireAuth(['admin']), (req, res) => {
+  const u = db.prepare(`SELECT id,name,email,phone,dob,default_address,loyalty_points,loyalty_tier,
+    verification_status,verification_submitted_at,verification_reviewed_at,verification_notes,
+    is_blocked,created_at FROM users WHERE id=? AND role='customer'`).get(req.params.id);
+  if (!u) return res.status(404).json({ error: 'not found' });
+  if (u.dob) u.age = calcAge(u.dob);
+  const orders = db.prepare(`SELECT id,order_no,status,total_cents,created_at,fulfillment FROM orders WHERE user_id=? ORDER BY id DESC LIMIT 50`).all(u.id);
+  res.json({ customer: u, orders });
+});
+
+app.patch('/api/admin/customers/:id', requireAuth(['admin']), (req, res) => {
+  const { is_blocked, loyalty_tier } = req.body || {};
+  const sets = []; const vals = [];
+  if (is_blocked !== undefined) { sets.push('is_blocked=?'); vals.push(is_blocked ? 1 : 0); }
+  if (loyalty_tier !== undefined) { sets.push('loyalty_tier=?'); vals.push(loyalty_tier); }
+  if (sets.length === 0) return res.status(400).json({ error: 'nothing to update' });
+  vals.push(req.params.id);
+  db.prepare(`UPDATE users SET ${sets.join(',')} WHERE id=? AND role='customer'`).run(...vals);
+  res.json({ ok: true });
 });
 
 app.get('/api/admin/drivers', requireAuth(['admin']), (_req, res) => {
-  const rows = db.prepare(`SELECT id,name,email,phone FROM users WHERE role='driver' ORDER BY name`).all();
+  const rows = db.prepare(`SELECT id,name,email,phone,driver_online FROM users WHERE role='driver' ORDER BY name`).all();
   res.json({ drivers: rows });
+});
+
+// Add new admin or driver user
+app.post('/api/admin/users', requireAuth(['admin']), (req, res) => {
+  const { email, password, name, phone, role } = req.body || {};
+  if (!email || !password || !name || !role) return res.status(400).json({ error: 'missing fields' });
+  if (!['admin','driver','customer'].includes(role)) return res.status(400).json({ error: 'invalid role' });
+  if (!isValidEmail(email)) return res.status(400).json({ error: 'invalid email' });
+  if (!isStrongPassword(password)) return res.status(400).json({ error: 'password must be at least 8 characters' });
+  const exists = db.prepare('SELECT id FROM users WHERE email=?').get(email.toLowerCase());
+  if (exists) return res.status(409).json({ error: 'email already registered' });
+  const hash = bcrypt.hashSync(password, 10);
+  const r = db.prepare(`INSERT INTO users (email,password_hash,name,phone,role,age_verified,verification_status) VALUES (?,?,?,?,?,1,'approved')`)
+    .run(email.toLowerCase(), hash, name, phone || null, role);
+  res.json({ id: Number(r.lastInsertRowid) });
+});
+
+app.delete('/api/admin/users/:id', requireAuth(['admin']), (req, res) => {
+  const u = db.prepare('SELECT id,role FROM users WHERE id=?').get(req.params.id);
+  if (!u) return res.status(404).json({ error: 'not found' });
+  if (Number(req.params.id) === req.user.id) return res.status(400).json({ error: "you can't delete your own account" });
+  if (u.role === 'customer') return res.status(400).json({ error: 'use block instead of delete for customer accounts' });
+  // Soft delete drivers/admins by blocking; preserve historical references
+  db.prepare('UPDATE users SET is_blocked=1 WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// Promo CRUD
+app.get('/api/admin/promos', requireAuth(['admin']), (_req, res) => {
+  const rows = db.prepare('SELECT * FROM promos ORDER BY code').all();
+  res.json({ promos: rows });
+});
+
+app.post('/api/admin/promos', requireAuth(['admin']), (req, res) => {
+  const { code, percent_off, max_uses, expires_at, active = 1 } = req.body || {};
+  if (!code || !percent_off) return res.status(400).json({ error: 'code and percent_off required' });
+  if (percent_off < 1 || percent_off > 100) return res.status(400).json({ error: 'percent_off must be 1-100' });
+  const codeUpper = code.trim().toUpperCase();
+  const exists = db.prepare('SELECT code FROM promos WHERE code=?').get(codeUpper);
+  if (exists) return res.status(409).json({ error: 'promo code already exists' });
+  db.prepare('INSERT INTO promos (code,percent_off,max_uses,expires_at,active) VALUES (?,?,?,?,?)').run(codeUpper, percent_off, max_uses || null, expires_at || null, active ? 1 : 0);
+  res.json({ ok: true });
+});
+
+app.patch('/api/admin/promos/:code', requireAuth(['admin']), (req, res) => {
+  const { percent_off, max_uses, expires_at, active } = req.body || {};
+  const sets = []; const vals = [];
+  if (percent_off !== undefined) { sets.push('percent_off=?'); vals.push(percent_off); }
+  if (max_uses !== undefined) { sets.push('max_uses=?'); vals.push(max_uses || null); }
+  if (expires_at !== undefined) { sets.push('expires_at=?'); vals.push(expires_at || null); }
+  if (active !== undefined) { sets.push('active=?'); vals.push(active ? 1 : 0); }
+  if (sets.length === 0) return res.status(400).json({ error: 'nothing to update' });
+  vals.push(req.params.code.toUpperCase());
+  db.prepare(`UPDATE promos SET ${sets.join(',')} WHERE code=?`).run(...vals);
+  res.json({ ok: true });
+});
+
+app.delete('/api/admin/promos/:code', requireAuth(['admin']), (req, res) => {
+  db.prepare('DELETE FROM promos WHERE code=?').run(req.params.code.toUpperCase());
+  res.json({ ok: true });
+});
+
+// Refund (test mode — in production this would call Stripe refund API)
+app.post('/api/admin/orders/:id/refund', requireAuth(['admin']), (req, res) => {
+  const o = db.prepare('SELECT * FROM orders WHERE id=?').get(req.params.id);
+  if (!o) return res.status(404).json({ error: 'not found' });
+  if (o.payment_status === 'refunded') return res.status(400).json({ error: 'already refunded' });
+  db.prepare(`UPDATE orders SET payment_status='refunded', cancel_reason=COALESCE(cancel_reason, 'admin refund') WHERE id=?`).run(o.id);
+  res.json({ ok: true, message: 'in production this would trigger Stripe refund automatically' });
 });
 
 // ---- Admin: ID Verification review ----
@@ -546,23 +803,78 @@ app.post('/api/admin/verifications/:user_id/reject', requireAuth(['admin']), (re
 
 // ---- Driver ----
 app.get('/api/driver/queue', requireAuth(['driver']), (req, res) => {
-  // available pickups (placed/packed, no driver) + my active deliveries
-  const available = db.prepare(`SELECT o.*, u.name as customer_name FROM orders o JOIN users u ON u.id=o.user_id
+  const me = db.prepare('SELECT driver_online FROM users WHERE id=?').get(req.user.id);
+  // For pre-acceptance: redact full address to neighborhood-only (privacy)
+  const available = db.prepare(`SELECT o.id, o.order_no, o.subtotal_cents, o.delivery_cents, o.total_cents, o.created_at, o.fulfillment, o.status, u.name as customer_name FROM orders o JOIN users u ON u.id=o.user_id
     WHERE o.fulfillment='delivery' AND o.driver_id IS NULL AND o.status IN ('placed','packed') ORDER BY o.id`).all();
-  const mine = db.prepare(`SELECT o.*, u.name as customer_name, u.phone as customer_phone FROM orders o JOIN users u ON u.id=o.user_id
+  // Add neighborhood-only address (last comma-separated segment)
+  const addrPub = db.prepare('SELECT address FROM orders WHERE id=?');
+  for (const a of available) {
+    const r = addrPub.get(a.id);
+    a.address_short = (r?.address || '').split(',').slice(-2).join(',').trim() || 'Address hidden until accepted';
+  }
+  // After acceptance: full info + line items + customer DOB for ID match
+  const mine = db.prepare(`SELECT o.*, u.name as customer_name, u.phone as customer_phone, u.dob as customer_dob FROM orders o JOIN users u ON u.id=o.user_id
     WHERE o.driver_id=? AND o.status IN ('out_for_delivery','packed') ORDER BY o.id`).all(req.user.id);
-  res.json({ available, mine });
+  for (const o of mine) {
+    if (o.customer_dob) o.customer_age = calcAge(o.customer_dob);
+    o.items = db.prepare('SELECT product_name, size, qty FROM order_items WHERE order_id=?').all(o.id);
+  }
+  // Also return today's completed deliveries for earnings tracker
+  const completed = db.prepare(`SELECT id, order_no, delivery_cents, delivered_at FROM orders
+    WHERE driver_id=? AND status='delivered' AND DATE(delivered_at)=DATE('now') ORDER BY id DESC`).all(req.user.id);
+  res.json({ available, mine, completed, online: !!me?.driver_online });
+});
+
+app.post('/api/driver/online', requireAuth(['driver']), (req, res) => {
+  const { online } = req.body || {};
+  db.prepare('UPDATE users SET driver_online=? WHERE id=?').run(online ? 1 : 0, req.user.id);
+  res.json({ ok: true });
 });
 
 app.post('/api/driver/orders/:id/accept', requireAuth(['driver']), (req, res) => {
+  // Accept only places into out_for_delivery if not already taken
+  const o = db.prepare('SELECT id, driver_id, status FROM orders WHERE id=?').get(req.params.id);
+  if (!o) return res.status(404).json({ error: 'not found' });
+  if (o.driver_id) return res.status(409).json({ error: 'already taken by another driver' });
+  if (!['placed','packed'].includes(o.status)) return res.status(400).json({ error: `cannot accept order with status ${o.status}` });
   db.prepare(`UPDATE orders SET driver_id=?, status='out_for_delivery' WHERE id=? AND driver_id IS NULL`).run(req.user.id, req.params.id);
   res.json({ ok: true });
+});
+
+app.post('/api/driver/orders/:id/refuse', requireAuth(['driver']), (req, res) => {
+  const { reason } = req.body || {};
+  if (!reason || !reason.trim()) return res.status(400).json({ error: 'refusal reason is required (under 21, intoxicated, no ID, etc)' });
+  const o = db.prepare('SELECT id, driver_id, status FROM orders WHERE id=?').get(req.params.id);
+  if (!o) return res.status(404).json({ error: 'not found' });
+  if (o.driver_id !== req.user.id) return res.status(403).json({ error: 'not your order' });
+  if (o.status === 'delivered' || o.status === 'cancelled') return res.status(400).json({ error: `cannot refuse order with status ${o.status}` });
+  db.exec('BEGIN');
+  try {
+    db.prepare(`UPDATE orders SET status='cancelled', cancelled_at=CURRENT_TIMESTAMP, cancelled_by='driver', refusal_reason=?, cancel_reason=? WHERE id=?`)
+      .run(reason.trim(), 'refused at delivery: ' + reason.trim(), o.id);
+    // restore inventory
+    const items = db.prepare('SELECT * FROM order_items WHERE order_id=?').all(o.id);
+    const restore = db.prepare('UPDATE product_variants SET stock = stock + ? WHERE id=?');
+    for (const it of items) restore.run(it.qty, it.variant_id);
+    db.exec('COMMIT');
+    res.json({ ok: true });
+  } catch (e) {
+    db.exec('ROLLBACK');
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.post('/api/driver/orders/:id/deliver', requireAuth(['driver']), (req, res) => {
   const { id_verified, delivery_id_photo_url, delivery_proof_photo_url } = req.body || {};
   if (!id_verified) return res.status(400).json({ error: 'must confirm ID verification at door' });
   if (!delivery_id_photo_url) return res.status(400).json({ error: 'must capture customer ID photo at delivery' });
+  if (!isValidImageUrl(delivery_id_photo_url)) return res.status(400).json({ error: 'invalid ID photo' });
+  if (delivery_proof_photo_url && !isValidImageUrl(delivery_proof_photo_url)) return res.status(400).json({ error: 'invalid proof photo' });
+  const o = db.prepare('SELECT driver_id, status FROM orders WHERE id=?').get(req.params.id);
+  if (!o) return res.status(404).json({ error: 'not found' });
+  if (o.driver_id !== req.user.id) return res.status(403).json({ error: 'not your order' });
+  if (!['out_for_delivery','packed'].includes(o.status)) return res.status(400).json({ error: `cannot deliver order with status ${o.status}` });
   db.prepare(`UPDATE orders SET status='delivered', delivered_at=CURRENT_TIMESTAMP,
               delivery_id_photo_url=?, delivery_proof_photo_url=?
               WHERE id=? AND driver_id=?`).run(delivery_id_photo_url, delivery_proof_photo_url || null, req.params.id, req.user.id);

@@ -11,6 +11,7 @@ async function api(path, opts={}) {
 }
 const $$ = c => `$${(c/100).toFixed(2)}`;
 const fmtDate = s => new Date(s).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+const esc = (s) => { if (s == null) return ''; return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); };
 
 async function init() {
   try {
@@ -254,81 +255,242 @@ async function renderOverview(v) {
 
 async function renderOrders(v) {
   const [{orders},{drivers}] = await Promise.all([api('/admin/orders'),api('/admin/drivers')]);
+  state.adminOrders = orders;
+  state.adminDrivers = drivers;
   v.innerHTML = `
     <div class="topbar"><div><h1>Orders</h1><div class="sub">${orders.length} orders</div></div>
-      <select onchange="filterOrders(this.value)">
-        <option value="">All statuses</option>
-        <option value="placed">Placed</option>
-        <option value="packed">Packed</option>
-        <option value="out_for_delivery">Out for delivery</option>
-        <option value="delivered">Delivered</option>
-      </select>
+      <div style="display:flex;gap:8px">
+        <input id="orders-search" placeholder="Search order # or customer..." value="${esc(state.ordersSearch||'')}" oninput="state.ordersSearch=this.value;renderOrdersTable()" style="background:var(--surface-3);border:1px solid var(--line);color:var(--text);padding:8px 12px;border-radius:8px;font-family:inherit;font-size:13px;width:240px"/>
+        <select onchange="filterOrders(this.value)" style="background:var(--surface-3);border:1px solid var(--line);color:var(--text);padding:8px 12px;border-radius:8px;font-family:inherit;font-size:13px">
+          <option value="" ${!state.ordersStatus?'selected':''}>All statuses</option>
+          <option value="placed" ${state.ordersStatus==='placed'?'selected':''}>Placed</option>
+          <option value="packed" ${state.ordersStatus==='packed'?'selected':''}>Packed</option>
+          <option value="out_for_delivery" ${state.ordersStatus==='out_for_delivery'?'selected':''}>Out for delivery</option>
+          <option value="delivered" ${state.ordersStatus==='delivered'?'selected':''}>Delivered</option>
+          <option value="cancelled" ${state.ordersStatus==='cancelled'?'selected':''}>Cancelled</option>
+        </select>
+      </div>
     </div>
     <div class="content">
       <div class="panel">
-        ${orders.length?`<table>
-          <thead><tr><th>Order</th><th>Customer</th><th>Address</th><th>Type</th><th>Status</th><th>Driver</th><th>Total</th><th>Placed</th><th></th></tr></thead>
-          <tbody id="orders-tbody">
-            ${orders.map(o=>`<tr>
-              <td><b>#${o.order_no}</b></td>
-              <td>${o.customer_name}<div style="font-size:11px;color:var(--text-mute)">${o.customer_phone||''}</div></td>
-              <td style="max-width:200px;font-size:11px;color:var(--text-dim)">${o.address||'—'}</td>
-              <td>${o.fulfillment==='delivery'?'🚚':'🏪'} ${o.fulfillment}</td>
-              <td><span class="status s-${o.status}">${o.status.replace(/_/g,' ')}</span></td>
-              <td>${o.driver_name||'<span style="color:var(--text-mute)">unassigned</span>'}</td>
-              <td><b>${$$(o.total_cents)}</b></td>
-              <td>${fmtDate(o.created_at)}</td>
-              <td>
-                <div class="row-actions">
-                  <select onchange="updateOrder(${o.id},{status:this.value})" style="font-size:11px">
-                    ${['placed','packed','out_for_delivery','delivered','cancelled'].map(s=>`<option value="${s}" ${o.status===s?'selected':''}>${s.replace(/_/g,' ')}</option>`).join('')}
-                  </select>
-                  ${o.fulfillment==='delivery'?`<select onchange="updateOrder(${o.id},{driver_id:this.value?+this.value:null})" style="font-size:11px">
-                    <option value="">No driver</option>
-                    ${drivers.map(dr=>`<option value="${dr.id}" ${o.driver_id===dr.id?'selected':''}>${dr.name}</option>`).join('')}
-                  </select>`:''}
-                </div>
-              </td>
-            </tr>`).join('')}
-          </tbody>
-        </table>`:'<p class="empty">No orders match this filter.</p>'}
+        <div id="orders-table-host"></div>
       </div>
     </div>`;
+  renderOrdersTable();
 }
-window.filterOrders = async (status) => {
-  const url = status?`/admin/orders?status=${status}`:'/admin/orders';
-  const {orders} = await api(url);
-  const [{drivers}] = [await api('/admin/drivers')];
-  document.getElementById('orders-tbody').innerHTML = orders.length?orders.map(o=>`<tr>
-    <td><b>#${o.order_no}</b></td><td>${o.customer_name}</td>
-    <td style="font-size:11px;color:var(--text-dim)">${o.address||'—'}</td>
-    <td>${o.fulfillment==='delivery'?'🚚':'🏪'} ${o.fulfillment}</td>
-    <td><span class="status s-${o.status}">${o.status.replace(/_/g,' ')}</span></td>
-    <td>${o.driver_name||'unassigned'}</td><td><b>${$$(o.total_cents)}</b></td><td>${fmtDate(o.created_at)}</td><td></td>
-  </tr>`).join(''):'<tr><td colspan="9"><p class="empty">No orders.</p></td></tr>';
+
+window.renderOrdersTable = () => {
+  const host = document.getElementById('orders-table-host');
+  if (!host) return;
+  const orders = state.adminOrders || [];
+  const drivers = state.adminDrivers || [];
+  const q = (state.ordersSearch || '').toLowerCase().trim();
+  const filtered = q ? orders.filter(o => (o.order_no||'').toLowerCase().includes(q) || (o.customer_name||'').toLowerCase().includes(q) || (o.customer_phone||'').toLowerCase().includes(q)) : orders;
+  if (filtered.length === 0) { host.innerHTML = '<p class="empty">No orders match this filter.</p>'; return; }
+  host.innerHTML = `<table>
+    <thead><tr><th>Order</th><th>Customer</th><th>Address</th><th>Type</th><th>Status</th><th>Driver</th><th>Total</th><th>Placed</th><th></th></tr></thead>
+    <tbody>
+      ${filtered.map(o=>`<tr>
+        <td><b>#${esc(o.order_no)}</b></td>
+        <td>${esc(o.customer_name)}<div style="font-size:11px;color:var(--text-mute)">${esc(o.customer_phone||'')}</div></td>
+        <td style="max-width:200px;font-size:11px;color:var(--text-dim)">${esc(o.address||'—')}</td>
+        <td>${o.fulfillment==='delivery'?'🚚':'🏪'} ${esc(o.fulfillment)}</td>
+        <td><span class="status s-${esc(o.status)}">${esc(o.status.replace(/_/g,' '))}</span></td>
+        <td>${o.driver_name?esc(o.driver_name):'<span style="color:var(--text-mute)">unassigned</span>'}</td>
+        <td><b>${$$(o.total_cents)}</b></td>
+        <td>${fmtDate(o.created_at)}</td>
+        <td>
+          <div class="row-actions">
+            <button class="btn btn-primary btn-sm" onclick="openOrderDetail(${o.id})">View</button>
+            <select onchange="confirmStatusChange(${o.id},this.value,'${esc(o.status)}')" style="font-size:11px">
+              ${['placed','packed','out_for_delivery','delivered','cancelled'].map(s=>`<option value="${s}" ${o.status===s?'selected':''}>${s.replace(/_/g,' ')}</option>`).join('')}
+            </select>
+            ${o.fulfillment==='delivery'?`<select onchange="updateOrder(${o.id},{driver_id:this.value?+this.value:null})" style="font-size:11px">
+              <option value="">No driver</option>
+              ${drivers.map(dr=>`<option value="${dr.id}" ${o.driver_id===dr.id?'selected':''}>${esc(dr.name)}</option>`).join('')}
+            </select>`:''}
+          </div>
+        </td>
+      </tr>`).join('')}
+    </tbody>
+  </table>`;
 };
+
+window.confirmStatusChange = (id, newStatus, oldStatus) => {
+  if (newStatus === oldStatus) return;
+  if (newStatus === 'cancelled' && !confirm('Cancel this order? Inventory will be restored and the customer will be refunded their loyalty points.')) {
+    renderOrdersTable(); return;
+  }
+  updateOrder(id, { status: newStatus });
+};
+
+window.openOrderDetail = async (orderId) => {
+  const host = document.getElementById('modal-host');
+  host.innerHTML = '<div class="modal-overlay"><div class="modal" style="max-height:92vh"><div class="modal-body" style="padding:60px;text-align:center"><div class="spinner"></div></div></div></div>';
+  try {
+    const { order } = await api('/orders/' + orderId);
+    const photoBlock = (label, src) => src
+      ? `<div style="background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px"><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-bottom:6px">${esc(label)}</div><img src="${esc(src)}" style="width:100%;max-height:240px;border-radius:6px;object-fit:contain;cursor:zoom-in" onclick="window.open(this.src,'_blank')" /></div>`
+      : '';
+    host.innerHTML = `
+      <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+        <div class="modal">
+          <div class="modal-head">
+            <h2>Order #${esc(order.order_no)}</h2>
+            <button class="modal-close" onclick="closeModal()">×</button>
+          </div>
+          <div class="modal-body">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+              <div><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600">Status</div><div style="font-size:14px;font-weight:600"><span class="status s-${esc(order.status)}">${esc(order.status.replace(/_/g,' '))}</span></div></div>
+              <div><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600">Type</div><div style="font-size:14px;font-weight:600">${order.fulfillment==='delivery'?'🚚 Delivery':'🏪 Pickup'}</div></div>
+              <div><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600">Placed</div><div style="font-size:14px;font-weight:600">${new Date(order.created_at).toLocaleString()}</div></div>
+              ${order.delivered_at?`<div><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600">Delivered</div><div style="font-size:14px;font-weight:600">${new Date(order.delivered_at).toLocaleString()}</div></div>`:''}
+            </div>
+            <div class="panel" style="margin:0 0 14px 0;padding:12px">
+              <div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-bottom:6px">Customer</div>
+              <div style="font-size:14px;font-weight:600">${esc(order.customer?.name||'')} <span style="color:var(--text-mute);font-weight:400">${esc(order.customer?.email||'')}</span></div>
+              <div style="font-size:13px;color:var(--text-dim);margin-top:4px">${esc(order.customer?.phone||'—')} ${order.customer?.dob?` · DOB ${esc(order.customer.dob)} (age ${order.customer.age})`:''}</div>
+              ${order.customer?.verification_status?`<div style="margin-top:6px"><span class="status s-${order.customer.verification_status==='approved'?'delivered':order.customer.verification_status==='rejected'?'cancelled':'placed'}">ID ${esc(order.customer.verification_status)}</span></div>`:''}
+            </div>
+            ${order.address?`<div class="panel" style="margin:0 0 14px 0;padding:12px"><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-bottom:6px">Address</div><div style="font-size:13px">${esc(order.address)}</div></div>`:''}
+            ${order.driver?`<div class="panel" style="margin:0 0 14px 0;padding:12px"><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-bottom:6px">Driver</div><div style="font-size:14px;font-weight:600">${esc(order.driver.name)} <span style="color:var(--text-mute);font-weight:400">${esc(order.driver.phone||'')}</span></div></div>`:''}
+            ${order.refusal_reason?`<div class="panel" style="margin:0 0 14px 0;padding:12px;background:rgba(255,91,110,.05);border-color:rgba(255,91,110,.3)"><div style="font-size:11px;color:var(--danger);text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin-bottom:6px">Refused at delivery</div><div style="font-size:13px">${esc(order.refusal_reason)}</div></div>`:''}
+            ${order.cancel_reason?`<div class="panel" style="margin:0 0 14px 0;padding:12px;background:rgba(255,91,110,.05);border-color:rgba(255,91,110,.3)"><div style="font-size:11px;color:var(--danger);text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin-bottom:6px">Cancelled by ${esc(order.cancelled_by||'')}</div><div style="font-size:13px">${esc(order.cancel_reason)}</div></div>`:''}
+            <div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin:14px 0 6px">Items</div>
+            <table style="margin-bottom:14px"><thead><tr><th>Product</th><th>Size</th><th>Qty</th><th>Price</th></tr></thead><tbody>
+              ${(order.items||[]).map(it=>`<tr><td>${esc(it.product_name)}</td><td>${esc(it.size)}</td><td>${it.qty}</td><td>${$$(it.price_cents*it.qty)}</td></tr>`).join('')}
+            </tbody></table>
+            <div class="totals" style="margin-bottom:14px;background:var(--surface-2);padding:14px;border-radius:10px;border:1px solid var(--line)">
+              <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px"><span>Subtotal</span><span>${$$(order.subtotal_cents)}</span></div>
+              ${order.discount_cents>0?`<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px;color:var(--neon)"><span>Discount</span><span>−${$$(order.discount_cents)}</span></div>`:''}
+              <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px"><span>Delivery</span><span>${$$(order.delivery_cents)}</span></div>
+              <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px"><span>Tax</span><span>${$$(order.tax_cents)}</span></div>
+              <div style="display:flex;justify-content:space-between;font-size:15px;font-weight:700;padding-top:6px;border-top:1px solid var(--line)"><span>Total</span><span style="color:var(--neon)">${$$(order.total_cents)}</span></div>
+            </div>
+            ${(order.delivery_id_photo_url || order.delivery_proof_photo_url) ? `
+              <div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin:14px 0 6px">Delivery photos</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                ${photoBlock('Customer ID at delivery', order.delivery_id_photo_url)}
+                ${photoBlock('Delivery proof', order.delivery_proof_photo_url)}
+              </div>` : ''}
+          </div>
+          <div class="modal-foot">
+            <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+            ${order.status==='delivered' && order.payment_status!=='refunded' ? `<button class="btn" style="background:var(--warn,#ffb547);color:#0a0a0b;width:auto;padding:10px 20px" onclick="refundOrder(${order.id})">Issue refund</button>` : ''}
+          </div>
+        </div>
+      </div>`;
+  } catch (e) { closeModal(); alert('Failed to load order: ' + e.message); }
+};
+
+window.refundOrder = async (id) => {
+  if (!confirm('Issue a refund for this order? In production this would trigger a Stripe refund automatically.')) return;
+  try {
+    await api('/admin/orders/' + id + '/refund', { method:'POST' });
+    closeModal();
+    loadView();
+    alert('Refund processed (test mode — no real money moved)');
+  } catch (e) { alert('Failed: ' + e.message); }
+};
+
+window.filterOrders = async (status) => {
+  state.ordersStatus = status;
+  const url = status?`/admin/orders?status=${status}`:'/admin/orders';
+  try {
+    const {orders} = await api(url);
+    state.adminOrders = orders;
+    renderOrdersTable();
+  } catch (e) { alert('Failed: ' + e.message); }
+};
+
 window.updateOrder = async (id, body) => {
-  await api('/admin/orders/'+id, { method:'PATCH', body });
-  loadView();
+  try {
+    await api('/admin/orders/'+id, { method:'PATCH', body });
+    loadView();
+  } catch (e) { alert('Failed: ' + e.message); loadView(); }
 };
 
 async function renderDrivers(v) {
   const {drivers} = await api('/admin/drivers');
   v.innerHTML = `
-    <div class="topbar"><div><h1>Drivers</h1><div class="sub">${drivers.length} active drivers</div></div></div>
+    <div class="topbar"><div><h1>Drivers</h1><div class="sub">${drivers.length} active drivers</div></div>
+      <button class="btn btn-primary" onclick="openAddUser('driver')">+ Add driver</button>
+    </div>
     <div class="content">
       <div class="cards">
-        ${drivers.map(d=>`<div class="card"><div class="lbl">Driver</div><div class="val" style="font-size:18px">${d.name}</div><div class="delta" style="color:var(--text-mute)">${d.email}</div><div style="margin-top:10px"><span class="status s-out_for_delivery">● Available</span></div></div>`).join('')}
+        ${drivers.map(d=>`<div class="card">
+          <div class="lbl">Driver</div>
+          <div class="val" style="font-size:18px">${esc(d.name)}</div>
+          <div class="delta" style="color:var(--text-mute)">${esc(d.email)}</div>
+          <div class="delta" style="color:var(--text-mute);font-size:11px;margin-top:4px">${esc(d.phone||'no phone')}</div>
+          <div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center">
+            <span class="status ${d.driver_online?'s-out_for_delivery':'s-cancelled'}">● ${d.driver_online?'Online':'Offline'}</span>
+            <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="removeUser(${d.id},'${esc(d.name)}')">Remove</button>
+          </div>
+        </div>`).join('')}
       </div>
       <div class="panel">
-        <div class="panel-title">Driver login info</div>
-        <p style="font-size:13px;color:var(--text-dim);line-height:1.6">Drivers sign in at <b style="color:var(--neon)">/driver/</b> using their email and password. Demo driver: <code style="background:var(--surface-3);padding:2px 6px;border-radius:4px">driver@munchies.test / driver123</code></p>
+        <div class="panel-title">Driver access</div>
+        <p style="font-size:13px;color:var(--text-dim);line-height:1.6">Drivers sign in at <b style="color:var(--neon)">${window.location.origin}/driver/</b> using their email and password. Click "+ Add driver" to create a new driver account; share their credentials securely (do not email passwords).</p>
       </div>
     </div>`;
 }
 
+window.openAddUser = (defaultRole) => {
+  const host = document.getElementById('modal-host');
+  host.innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="width:480px">
+        <div class="modal-head">
+          <h2>Add team member</h2>
+          <button class="modal-close" onclick="closeModal()">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-grid">
+            <div class="field full"><label>Full name *</label><input id="au-name" placeholder="Jane Doe"/></div>
+            <div class="field full"><label>Email *</label><input id="au-email" type="email" placeholder="jane@yourbiz.com"/></div>
+            <div class="field"><label>Phone</label><input id="au-phone" type="tel" placeholder="+1 (555) 123-4567"/></div>
+            <div class="field"><label>Role *</label><select id="au-role">
+              <option value="driver" ${defaultRole==='driver'?'selected':''}>Driver</option>
+              <option value="admin" ${defaultRole==='admin'?'selected':''}>Admin</option>
+            </select></div>
+            <div class="field full"><label>Initial password *</label><input id="au-pass" type="text" placeholder="At least 8 characters" value="${Math.random().toString(36).slice(2,10)}A!"/><div style="font-size:11px;color:var(--text-mute);margin-top:4px">They can change this later</div></div>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+          <button class="btn btn-primary" onclick="saveUser()">Create account</button>
+        </div>
+      </div>
+    </div>`;
+};
+
+window.saveUser = async () => {
+  const body = {
+    name: document.getElementById('au-name').value.trim(),
+    email: document.getElementById('au-email').value.trim(),
+    phone: document.getElementById('au-phone').value.trim(),
+    role: document.getElementById('au-role').value,
+    password: document.getElementById('au-pass').value,
+  };
+  if (!body.name || !body.email || !body.password) { alert('Name, email, and password are required.'); return; }
+  try {
+    await api('/admin/users', { method:'POST', body });
+    alert(`Account created.\n\nEmail: ${body.email}\nPassword: ${body.password}\n\nSave these credentials and share them with ${body.name} securely.`);
+    closeModal();
+    loadView();
+  } catch (e) { alert('Failed: ' + e.message); }
+};
+
+window.removeUser = async (id, name) => {
+  if (!confirm(`Remove ${name}? Their account will be blocked but order history is preserved.`)) return;
+  try { await api('/admin/users/' + id, { method:'DELETE' }); loadView(); }
+  catch (e) { alert('Failed: ' + e.message); }
+};
+
 async function renderProducts(v) {
   const {products} = await api('/admin/products');
+  state.adminProducts = products;
   v.innerHTML = `
     <div class="topbar"><div><h1>Products</h1><div class="sub">${products.length} products in catalog</div></div>
       <button class="btn btn-primary" onclick="openAddProduct()">+ Add product</button>
@@ -341,17 +503,18 @@ async function renderProducts(v) {
             ${products.length?products.map(p=>{
               const totalStock = p.variants.reduce((s,v)=>s+v.stock,0);
               return `<tr>
-                <td>${p.image_url ? `<img class="product-thumb" src="${p.image_url}" alt=""/>` : `<span style="font-size:32px">${p.emoji}</span>`}</td>
-                <td><b>${p.name}</b><div style="font-size:11px;color:var(--text-mute)">${p.sub||''}</div></td>
-                <td><span class="tag">${p.category_name}</span></td>
-                <td>${p.type}</td>
-                <td>${p.thc||'—'} / ${p.cbd||'—'}</td>
-                <td>${p.variants.map(va=>`<span class="tag" style="margin-right:4px">${va.size} · ${$$(va.price_cents)}</span>`).join('')}</td>
+                <td>${p.image_url ? `<img class="product-thumb" src="${esc(p.image_url)}" alt=""/>` : `<span style="font-size:32px">${esc(p.emoji)}</span>`}</td>
+                <td><b>${esc(p.name)}</b><div style="font-size:11px;color:var(--text-mute)">${esc(p.sub||'')}</div></td>
+                <td><span class="tag">${esc(p.category_name)}</span></td>
+                <td>${esc(p.type)}</td>
+                <td>${esc(p.thc||'—')} / ${esc(p.cbd||'—')}</td>
+                <td>${p.variants.map(va=>`<span class="tag" style="margin-right:4px">${esc(va.size)} · ${$$(va.price_cents)}</span>`).join('')}</td>
                 <td><span class="${totalStock<10?'stock-low':'stock-ok'}"><b>${totalStock}</b></span></td>
                 <td>
                   <div class="row-actions">
+                    <button class="btn btn-primary btn-sm" onclick="openEditProduct(${p.id})">Edit</button>
                     <button class="btn btn-ghost btn-sm" onclick="navTo('inventory')">Stock</button>
-                    <button class="btn btn-ghost btn-sm" style="color:var(--danger);border-color:rgba(255,91,110,.3)" onclick="deleteProduct(${p.id},'${p.name.replace(/'/g,"\\'")}')">Delete</button>
+                    <button class="btn btn-ghost btn-sm" style="color:var(--danger);border-color:rgba(255,91,110,.3)" data-id="${p.id}" data-name="${esc(p.name)}" onclick="deleteProduct(this.dataset.id, this.dataset.name)">Delete</button>
                   </div>
                 </td>
               </tr>`;
@@ -361,6 +524,33 @@ async function renderProducts(v) {
       </div>
     </div>`;
 }
+
+window.openEditProduct = (productId) => {
+  const p = (state.adminProducts || []).find(x => x.id === productId);
+  if (!p) return;
+  // Reuse the add product modal but pre-fill with this product
+  state.editingProductId = productId;
+  openAddProduct();
+  // Fill values after the modal renders
+  setTimeout(() => {
+    document.getElementById('np-name').value = p.name || '';
+    document.getElementById('np-sub').value = p.sub || '';
+    document.getElementById('np-cat').value = p.category_id || '';
+    document.getElementById('np-type').value = p.type || 'Hybrid';
+    document.getElementById('np-thc').value = p.thc || '';
+    document.getElementById('np-cbd').value = p.cbd || '';
+    document.getElementById('np-emoji').value = p.emoji || '🌿';
+    document.getElementById('np-tag').value = p.tag || '';
+    document.getElementById('np-desc').value = p.description || '';
+    if (p.image_url) {
+      document.getElementById('np-image-data').value = p.image_url;
+      const img = document.getElementById('img-preview-img');
+      img.src = p.image_url;
+      document.getElementById('img-preview').style.display = 'block';
+    }
+    document.querySelector('.modal-head h2').textContent = 'Edit product';
+  }, 50);
+};
 
 window.openAddProduct = () => {
   const cats = state.categories;
@@ -576,7 +766,14 @@ window.saveProduct = async () => {
   try {
     const saveBtn = document.querySelector('.modal-foot .btn-primary');
     if (saveBtn) { saveBtn.textContent = 'Saving…'; saveBtn.disabled = true; }
-    await api('/admin/products', { method:'POST', body });
+    if (state.editingProductId) {
+      // Edit existing — only update product fields (not variants — those have their own endpoint)
+      const { variants: _v, ...rest } = body;
+      await api('/admin/products/' + state.editingProductId, { method:'PATCH', body: rest });
+      state.editingProductId = null;
+    } else {
+      await api('/admin/products', { method:'POST', body });
+    }
     closeModal();
     loadView();
   } catch (e) { alert('Failed to save: ' + e.message); }
@@ -622,42 +819,157 @@ window.bumpStock = async (id, current) => {
 };
 
 async function renderCustomers(v) {
-  const {customers} = await api('/admin/customers');
+  const search = state.customerSearch || '';
+  const url = search ? `/admin/customers?search=${encodeURIComponent(search)}` : '/admin/customers';
+  const {customers} = await api(url);
   v.innerHTML = `
-    <div class="topbar"><div><h1>Customers</h1><div class="sub">${customers.length} customers · sorted by lifetime value</div></div></div>
+    <div class="topbar"><div><h1>Customers</h1><div class="sub">${customers.length} customers · sorted by lifetime value</div></div>
+      <input id="cust-search" placeholder="Search by name, email, phone..." value="${esc(search)}" oninput="state.customerSearch=this.value;clearTimeout(window._cs);window._cs=setTimeout(loadView,250)" style="background:var(--surface-3);border:1px solid var(--line);color:var(--text);padding:8px 12px;border-radius:8px;font-family:inherit;font-size:13px;width:280px"/>
+    </div>
     <div class="content">
       <div class="panel">
         <table>
-          <thead><tr><th>Name</th><th>Email</th><th>Tier</th><th>Points</th><th>Orders</th><th>LTV</th><th>Joined</th></tr></thead>
+          <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Tier</th><th>ID Status</th><th>Points</th><th>Orders</th><th>LTV</th><th></th></tr></thead>
           <tbody>
-            ${customers.length?customers.map(c=>`<tr>
-              <td><b>${c.name}</b></td>
-              <td>${c.email}</td>
-              <td><span class="tag" style="background:${c.loyalty_tier==='Platinum'?'rgba(212,175,55,.2)':c.loyalty_tier==='Gold'?'rgba(212,175,55,.15)':'var(--surface-3)'};color:${c.loyalty_tier==='Gold'||c.loyalty_tier==='Platinum'?'var(--gold)':'var(--text-dim)'}">${c.loyalty_tier}</span></td>
+            ${customers.length?customers.map(c=>`<tr style="${c.is_blocked?'opacity:0.5':''}">
+              <td><b>${esc(c.name)}</b>${c.is_blocked?' <span class="status s-cancelled" style="margin-left:6px">BLOCKED</span>':''}</td>
+              <td>${esc(c.email)}</td>
+              <td>${esc(c.phone||'—')}</td>
+              <td><span class="tag" style="background:${c.loyalty_tier==='Platinum'?'rgba(212,175,55,.2)':c.loyalty_tier==='Gold'?'rgba(212,175,55,.15)':'var(--surface-3)'};color:${c.loyalty_tier==='Gold'||c.loyalty_tier==='Platinum'?'var(--gold)':'var(--text-dim)'}">${esc(c.loyalty_tier)}</span></td>
+              <td><span class="status s-${c.verification_status==='approved'?'delivered':c.verification_status==='rejected'?'cancelled':c.verification_status==='pending'?'placed':'packed'}">${esc(c.verification_status||'unverified')}</span></td>
               <td><b>${c.loyalty_points}</b></td>
               <td>${c.order_count}</td>
               <td><b style="color:var(--neon)">${$$(c.ltv_cents)}</b></td>
-              <td>${new Date(c.created_at).toLocaleDateString()}</td>
-            </tr>`).join(''):'<tr><td colspan="7"><p class="empty">No customers yet.</p></td></tr>'}
+              <td><button class="btn btn-primary btn-sm" onclick="openCustomerDetail(${c.id})">View</button></td>
+            </tr>`).join(''):'<tr><td colspan="9"><p class="empty">No customers match your search.</p></td></tr>'}
           </tbody>
         </table>
       </div>
     </div>`;
 }
 
+window.openCustomerDetail = async (id) => {
+  const host = document.getElementById('modal-host');
+  host.innerHTML = '<div class="modal-overlay"><div class="modal" style="max-height:92vh"><div class="modal-body" style="padding:60px;text-align:center"><div class="spinner"></div></div></div></div>';
+  try {
+    const { customer: c, orders } = await api('/admin/customers/' + id);
+    host.innerHTML = `
+      <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+        <div class="modal">
+          <div class="modal-head">
+            <h2>${esc(c.name)}</h2>
+            <button class="modal-close" onclick="closeModal()">×</button>
+          </div>
+          <div class="modal-body">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+              <div><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600">Email</div><div style="font-size:14px;font-weight:600">${esc(c.email)}</div></div>
+              <div><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600">Phone</div><div style="font-size:14px;font-weight:600">${esc(c.phone||'—')}</div></div>
+              <div><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600">DOB / Age</div><div style="font-size:14px;font-weight:600">${esc(c.dob||'—')} ${c.age?`(${c.age})`:''}</div></div>
+              <div><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600">Joined</div><div style="font-size:14px;font-weight:600">${new Date(c.created_at).toLocaleDateString()}</div></div>
+              <div><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600">Tier · Points</div><div style="font-size:14px;font-weight:600">${esc(c.loyalty_tier)} · ${c.loyalty_points}</div></div>
+              <div><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600">ID Verification</div><div style="font-size:14px;font-weight:600"><span class="status s-${c.verification_status==='approved'?'delivered':c.verification_status==='rejected'?'cancelled':'placed'}">${esc(c.verification_status||'unverified')}</span></div></div>
+            </div>
+            ${c.default_address?`<div class="panel" style="margin:0 0 14px 0;padding:12px"><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-bottom:6px">Default address</div><div style="font-size:13px">${esc(c.default_address)}</div></div>`:''}
+            <div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin:14px 0 6px">Order history (${orders.length})</div>
+            ${orders.length?`<table><thead><tr><th>Order</th><th>Status</th><th>Type</th><th>Total</th><th>Date</th></tr></thead><tbody>
+              ${orders.map(o=>`<tr style="cursor:pointer" onclick="closeModal();openOrderDetail(${o.id})"><td><b>#${esc(o.order_no)}</b></td><td><span class="status s-${esc(o.status)}">${esc(o.status.replace(/_/g,' '))}</span></td><td>${esc(o.fulfillment)}</td><td><b>${$$(o.total_cents)}</b></td><td>${fmtDate(o.created_at)}</td></tr>`).join('')}
+            </tbody></table>`:'<p class="empty">No orders yet.</p>'}
+          </div>
+          <div class="modal-foot">
+            <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+            <button class="btn btn-ghost" style="color:${c.is_blocked?'var(--neon)':'var(--danger)'};border-color:${c.is_blocked?'var(--neon)':'var(--danger)'};width:auto;padding:10px 20px" onclick="toggleBlock(${c.id},${c.is_blocked?0:1})">${c.is_blocked?'Unblock customer':'Block customer'}</button>
+          </div>
+        </div>
+      </div>`;
+  } catch (e) { closeModal(); alert('Failed: ' + e.message); }
+};
+
+window.toggleBlock = async (id, blocked) => {
+  const action = blocked ? 'block' : 'unblock';
+  if (!confirm(`Are you sure you want to ${action} this customer?`)) return;
+  try {
+    await api('/admin/customers/' + id, { method:'PATCH', body: { is_blocked: blocked }});
+    closeModal();
+    loadView();
+  } catch (e) { alert('Failed: ' + e.message); }
+};
+
 async function renderPromos(v) {
+  const { promos } = await api('/admin/promos');
   v.innerHTML = `
-    <div class="topbar"><div><h1>Promo codes</h1><div class="sub">Active discount codes</div></div></div>
+    <div class="topbar"><div><h1>Promo codes</h1><div class="sub">${promos.length} promo codes</div></div>
+      <button class="btn btn-primary" onclick="openAddPromo()">+ Add promo code</button>
+    </div>
     <div class="content">
-      <div class="cards">
-        <div class="card neon"><div class="lbl">Code</div><div class="val" style="font-family:monospace">FIRST20</div><div class="delta">20% off · welcome offer</div></div>
-        <div class="card"><div class="lbl">Code</div><div class="val" style="font-family:monospace">MUNCH10</div><div class="delta">10% off · returning customers</div></div>
-      </div>
       <div class="panel">
-        <p style="color:var(--text-dim);font-size:13px;line-height:1.6">Promo codes are stored in the <code style="background:var(--surface-3);padding:2px 6px;border-radius:4px">promos</code> table. Add new ones via SQL or extend the admin API with a CRUD endpoint. The customer app validates codes via <code style="background:var(--surface-3);padding:2px 6px;border-radius:4px">GET /api/promo/:code</code>.</p>
+        ${promos.length?`<table>
+          <thead><tr><th>Code</th><th>Discount</th><th>Uses</th><th>Limit</th><th>Expires</th><th>Status</th><th></th></tr></thead>
+          <tbody>
+            ${promos.map(p=>`<tr>
+              <td><code style="background:var(--surface-3);padding:3px 8px;border-radius:4px;font-family:monospace;font-weight:700">${esc(p.code)}</code></td>
+              <td><b>${p.percent_off}% off</b></td>
+              <td>${p.uses_count||0}</td>
+              <td>${p.max_uses||'unlimited'}</td>
+              <td>${p.expires_at?new Date(p.expires_at).toLocaleDateString():'—'}</td>
+              <td><span class="status s-${p.active?'delivered':'cancelled'}">${p.active?'active':'inactive'}</span></td>
+              <td>
+                <div class="row-actions">
+                  <button class="btn btn-ghost btn-sm" onclick="togglePromo('${esc(p.code)}',${p.active?0:1})">${p.active?'Disable':'Enable'}</button>
+                  <button class="btn btn-ghost btn-sm" style="color:var(--danger);border-color:rgba(255,91,110,.3)" onclick="deletePromo('${esc(p.code)}')">Delete</button>
+                </div>
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>`:'<p class="empty">No promo codes yet. Click + Add promo code to create one.</p>'}
       </div>
     </div>`;
 }
+
+window.openAddPromo = () => {
+  const host = document.getElementById('modal-host');
+  host.innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="width:480px">
+        <div class="modal-head">
+          <h2>New promo code</h2>
+          <button class="modal-close" onclick="closeModal()">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-grid">
+            <div class="field full"><label>Code *</label><input id="pr-code" placeholder="e.g. SUMMER20" maxlength="20" oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9_-]/g,'')"/></div>
+            <div class="field"><label>Percent off *</label><input id="pr-percent" type="number" min="1" max="100" placeholder="20"/></div>
+            <div class="field"><label>Max uses (optional)</label><input id="pr-max" type="number" min="1" placeholder="unlimited"/></div>
+            <div class="field full"><label>Expires (optional)</label><input id="pr-expires" type="date"/></div>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+          <button class="btn btn-primary" onclick="savePromo()">Save promo</button>
+        </div>
+      </div>
+    </div>`;
+};
+window.savePromo = async () => {
+  const code = document.getElementById('pr-code').value.trim();
+  const percent_off = parseInt(document.getElementById('pr-percent').value, 10);
+  const max_uses = document.getElementById('pr-max').value ? parseInt(document.getElementById('pr-max').value, 10) : null;
+  const expires_at = document.getElementById('pr-expires').value || null;
+  if (!code || !percent_off) { alert('Code and percent off are required.'); return; }
+  try {
+    await api('/admin/promos', { method:'POST', body: { code, percent_off, max_uses, expires_at, active: 1 }});
+    closeModal();
+    loadView();
+  } catch (e) { alert('Failed: ' + e.message); }
+};
+window.togglePromo = async (code, active) => {
+  try { await api('/admin/promos/' + code, { method:'PATCH', body: { active }}); loadView(); }
+  catch (e) { alert('Failed: ' + e.message); }
+};
+window.deletePromo = async (code) => {
+  if (!confirm(`Delete promo code "${code}"?`)) return;
+  try { await api('/admin/promos/' + code, { method:'DELETE' }); loadView(); }
+  catch (e) { alert('Failed: ' + e.message); }
+};
 
 // inject modal styles once
 (function injectModalCSS(){
